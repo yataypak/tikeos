@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Barcode,
   Printer,
@@ -17,6 +17,11 @@ import {
   BellRing,
   Users,
   Plus,
+  Mic,
+  MicOff,
+  Volume2,
+  HelpCircle,
+  Sparkles,
 } from 'lucide-react';
 import {
   type ProductItem,
@@ -34,6 +39,7 @@ import {
 } from '../core/restaurantEngine';
 import { type SiteCmsConfig } from '../data/siteCmsStore';
 import { printThermalReceipt, downloadThermalReceiptHtml } from '../utils/receiptPrinter';
+import { parsePOSVoiceCommand, type VoiceCommandResult } from '../core/voiceCommandParser';
 
 interface POSKasaTerminalProps {
   products: ProductItem[];
@@ -90,6 +96,28 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
   const [countedPhysicalCash, setCountedPhysicalCash] = useState<number>(15600);
   const [posMessage, setPosMessage] = useState<string | null>(null);
   const [receiptPreviewOrder, setReceiptPreviewOrder] = useState<OrderRecord | null>(null);
+
+  // Web Speech API Voice Command State (Sesli Komut Sistemi)
+  const [isVoiceListening, setIsVoiceListening] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceFeedback, setVoiceFeedback] = useState<{ message: string; isError?: boolean } | null>(null);
+  const [showVoiceHelpModal, setShowVoiceHelpModal] = useState(false);
+  const [lastExecutedCommand, setLastExecutedCommand] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+
+  // Component unmount cleanup
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   const activeTable = tables.find((t) => t.id === selectedTableId) || null;
   const activeTableOrder =
@@ -166,6 +194,236 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
     });
   };
 
+  // Web Speech API Voice Command Dispatcher
+  const handleExecuteVoiceCommand = (rawText: string) => {
+    if (!rawText.trim()) return;
+    const res = parsePOSVoiceCommand(rawText);
+    setLastExecutedCommand(rawText.trim());
+
+    switch (res.intent) {
+      case 'SHOW_OPEN_TICKETS': {
+        setPosCategoryId('ALL');
+        setPosSearch('');
+        const openOrder = orders.find(
+          (o) =>
+            o.tableId &&
+            o.status !== 'Tamamlandı' &&
+            o.status !== 'İptal edildi' &&
+            o.status !== 'İade edildi'
+        );
+        if (openOrder && openOrder.tableId) {
+          setSelectedTableId(openOrder.tableId);
+        }
+        setPosMessage(`Açık adisyonlar ve masalar listelendi.`);
+        break;
+      }
+
+      case 'PRINT_LAST_RECEIPT': {
+        const orderToPrint =
+          activeTableOrder ||
+          orders.find((o) => o.status === 'Tamamlandı' || o.paymentStatus === 'Ödendi') ||
+          orders[0] ||
+          null;
+
+        if (orderToPrint) {
+          setReceiptPreviewOrder(orderToPrint);
+          printThermalReceipt(orderToPrint, {
+            companyName: siteCmsConfig?.generalSettings.companyLegalName,
+            address: siteCmsConfig?.contact.addressTr,
+            phone: siteCmsConfig?.contact.phoneDisplay,
+            taxOfficeAndNo: siteCmsConfig?.generalSettings.taxOfficeAndNo,
+            logoUrl: siteCmsConfig?.header.logoUrl,
+          });
+          setReceiptActionNotice(`Termal fiş yazdırıldı: ${orderToPrint.orderNumber} (${orderToPrint.tableName})`);
+        } else {
+          setPosMessage('Yazdırılacak geçmiş fiş kaydı bulunamadı.');
+        }
+        break;
+      }
+
+      case 'SELECT_TABLE': {
+        if (res.tableNumber) {
+          const cleanNum = res.tableNumber.replace(/\D/g, '');
+          const found = tables.find(
+            (t) =>
+              t.number.toLowerCase() === res.tableNumber?.toLowerCase() ||
+              t.id.toLowerCase() === res.tableNumber?.toLowerCase() ||
+              t.number.includes(cleanNum)
+          );
+          if (found) {
+            setSelectedTableId(found.id);
+            setPosMessage(`${found.number} seçildi. (Durum: ${found.status}, Bakiye: ${found.openBalance.toFixed(2)} ₺)`);
+          } else {
+            setPosMessage(`Sistemde ${res.tableNumber} bulunamadı.`);
+          }
+        }
+        break;
+      }
+
+      case 'SELECT_FAST_SALE': {
+        setSelectedTableId('FAST_SALE');
+        setPosMessage('Hızlı Satış (Tezgah / Paket) adisyonu seçildi.');
+        break;
+      }
+
+      case 'SELECT_PAYMENT_METHOD': {
+        if (res.paymentMethod) {
+          setSelectedPaymentMethod(res.paymentMethod);
+          setPosMessage(`Ödeme yöntemi ${res.paymentMethod} olarak seçildi.`);
+        }
+        break;
+      }
+
+      case 'CONFIRM_PAYMENT': {
+        const amountToPay = customPayAmount
+          ? Number(customPayAmount)
+          : splitInfo.remainingAmount;
+
+        if (activeTableOrder) {
+          onSettleOrderPayment(
+            activeTableOrder.id,
+            amountToPay,
+            selectedPaymentMethod
+          );
+          setCustomPayAmount('');
+          setPosMessage(
+            `${activeTableOrder.orderNumber} için ${amountToPay.toFixed(2)} ₺ (${selectedPaymentMethod}) tahsilatı sesli komutla onaylandı.`
+          );
+        } else if (posCart.length > 0) {
+          onCreatePosOrder({
+            tableId: selectedTableId === 'FAST_SALE' ? null : selectedTableId,
+            channel: 'Kasa',
+            customerName: 'POS Hızlı Satış Misafiri (Sesli Komut)',
+            items: posCart,
+            discountAmount: calculatedDiscount,
+            paymentMethod: selectedPaymentMethod,
+            paidAmount: amountToPay,
+          });
+          setPosCart([]);
+          setCustomPayAmount('');
+          setPosMessage(
+            `Yeni POS siparişi sesli komutla oluşturuldu ve ${amountToPay.toFixed(2)} ₺ (${selectedPaymentMethod}) tahsil edildi.`
+          );
+        } else {
+          setPosMessage('Tahsilat için açık siparişi olan masa seçin veya sepete ürün ekleyin.');
+        }
+        break;
+      }
+
+      case 'CLEAR_CART': {
+        setPosCart([]);
+        setDiscountPercent(0);
+        setPosMessage('POS sepeti ve iskonto sıfırlandı.');
+        break;
+      }
+
+      case 'APPLY_DISCOUNT': {
+        if (res.discountPercent !== undefined) {
+          setDiscountPercent(res.discountPercent);
+          setPosMessage(`Adisyona %${res.discountPercent} yetkili iskonto uygulandı.`);
+        }
+        break;
+      }
+
+      case 'FILTER_CATEGORY': {
+        if (res.categoryFilter) {
+          setPosCategoryId(res.categoryFilter);
+          setPosSearch('');
+        }
+        break;
+      }
+
+      default: {
+        setPosMessage(res.feedbackMessage);
+        break;
+      }
+    }
+
+    setVoiceFeedback({
+      message: res.feedbackMessage,
+      isError: res.intent === 'UNKNOWN',
+    });
+
+    onRecordAudit(
+      'POS / Kasa',
+      'Sesli Komut (Web Speech)',
+      `"${rawText}" ➔ Niyet: ${res.intent}`,
+      res.intent === 'UNKNOWN' ? 'Uyarı' : 'Normal'
+    );
+  };
+
+  const toggleVoiceRecognition = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRec =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRec) {
+      setVoiceFeedback({
+        message: 'Tarayıcınız Web Speech API özelliğini doğrudan desteklemiyor. Aşağıdaki hazır test butonlarına tıklayarak sesli komutları deneyebilirsiniz.',
+        isError: true,
+      });
+      return;
+    }
+
+    if (isVoiceListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      setIsVoiceListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRec();
+      recognition.lang = 'tr-TR';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      recognition.onstart = () => {
+        setIsVoiceListening(true);
+        setVoiceTranscript('Mikrofon aktif, sizi dinliyor... "Açık adisyonları göster" veya "Son fişi yazdır" diyebilirsiniz.');
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .map((r: any) => r[0].transcript)
+          .join('');
+        setVoiceTranscript(transcript);
+
+        if (event.results[0]?.isFinal) {
+          handleExecuteVoiceCommand(transcript);
+          setIsVoiceListening(false);
+        }
+      };
+
+      recognition.onerror = (err: any) => {
+        setIsVoiceListening(false);
+        setVoiceFeedback({
+          message: `Mikrofon uyarısı (${err.error || 'Ses algılanamadı'}). Hazır komut düğmelerini kullanabilirsiniz.`,
+          isError: true,
+        });
+      };
+
+      recognition.onend = () => {
+        setIsVoiceListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e: any) {
+      setIsVoiceListening(false);
+      setVoiceFeedback({
+        message: 'Mikrofon başlatılamadı: ' + (e?.message || 'İzin verilmedi'),
+        isError: true,
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {posMessage && (
@@ -179,6 +437,122 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
           </button>
         </div>
       )}
+
+      {/* Sesli Komut (Web Speech API) Durum ve Geri Bildirim Bandı */}
+      {(isVoiceListening || voiceFeedback || lastExecutedCommand) && (
+        <div
+          role="region"
+          aria-label="Sesli Komut Durumu"
+          className={`rounded-2xl border p-4 text-xs transition-all flex flex-wrap items-center justify-between gap-3 ${
+            isVoiceListening
+              ? 'border-rose-500/70 bg-rose-950/20 text-rose-200 ring-2 ring-rose-500/30'
+              : voiceFeedback?.isError
+              ? 'border-amber-500/60 bg-amber-950/20 text-amber-200'
+              : 'border-[#D4AF6A]/60 bg-[#1A1815] text-[#F5F2EB]'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            {isVoiceListening ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-600 text-white font-bold animate-pulse text-[11px]">
+                <Mic className="w-3.5 h-3.5 animate-bounce" />
+                <span>Dinleniyor...</span>
+                <span className="flex gap-0.5 items-center ml-1">
+                  <span className="w-1 h-3 bg-white rounded-full animate-pulse" />
+                  <span className="w-1 h-4 bg-white rounded-full animate-pulse delay-75" />
+                  <span className="w-1 h-2 bg-white rounded-full animate-pulse delay-150" />
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#B86B35]/20 text-[#D4AF6A] font-bold text-[11px]">
+                <Volume2 className="w-3.5 h-3.5" />
+                <span>Sesli Komut</span>
+              </div>
+            )}
+
+            <div>
+              <div className="font-semibold">
+                {isVoiceListening
+                  ? voiceTranscript || 'Konuşun: "Açık adisyonları göster", "Son fişi yazdır", "Masa 3"...'
+                  : voiceFeedback?.message || `Son Çalıştırılan Komut: "${lastExecutedCommand}"`}
+              </div>
+              {lastExecutedCommand && isVoiceListening && (
+                <div className="text-[10px] text-neutral-400 mt-0.5">
+                  Önceki komut: {lastExecutedCommand}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowVoiceHelpModal(true)}
+              className="px-2.5 py-1 rounded-lg border border-neutral-600 hover:bg-neutral-800 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              Komut Rehberi
+            </button>
+            {voiceFeedback && (
+              <button
+                type="button"
+                onClick={() => setVoiceFeedback(null)}
+                className="px-2 py-1 text-[11px] underline text-neutral-400 hover:text-white cursor-pointer"
+              >
+                Kapat
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Hızlı Sesli Komut Simülatörü ve Test Çipleri */}
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="font-semibold text-neutral-500 mr-1 flex items-center gap-1">
+          <Sparkles className="w-3.5 h-3.5 text-[#D4AF6A]" /> Hızlı Sesli Komutlar:
+        </span>
+        <button
+          type="button"
+          onClick={() => handleExecuteVoiceCommand('Açık adisyonları göster')}
+          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
+        >
+          🎙️ &ldquo;Açık adisyonları göster&rdquo;
+        </button>
+        <button
+          type="button"
+          onClick={() => handleExecuteVoiceCommand('Son fişi yazdır')}
+          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
+        >
+          🎙️ &ldquo;Son fişi yazdır&rdquo;
+        </button>
+        <button
+          type="button"
+          onClick={() => handleExecuteVoiceCommand('Masa 3')}
+          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
+        >
+          🎙️ &ldquo;Masa 3&rdquo;
+        </button>
+        <button
+          type="button"
+          onClick={() => handleExecuteVoiceCommand('Nakit')}
+          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
+        >
+          🎙️ &ldquo;Nakit&rdquo;
+        </button>
+        <button
+          type="button"
+          onClick={() => handleExecuteVoiceCommand('Kredi kartı')}
+          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
+        >
+          🎙️ &ldquo;Kredi kartı&rdquo;
+        </button>
+        <button
+          type="button"
+          onClick={() => handleExecuteVoiceCommand('Yüzde on indirim yap')}
+          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
+        >
+          🎙️ &ldquo;%10 İndirim&rdquo;
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left 7 Cols: Barcode, Table Selection & Fast Touch Product Grid */}
@@ -202,6 +576,40 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                 </select>
               </div>
 
+              {/* Web Speech API Voice Microphone Button */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={toggleVoiceRecognition}
+                  title={isVoiceListening ? 'Sesli dinlemeyi durdur' : 'Web Speech API Sesli Komut Başlat'}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm ${
+                    isVoiceListening
+                      ? 'bg-rose-600 text-white animate-pulse ring-2 ring-rose-400'
+                      : 'bg-[#B86B35] hover:bg-[#9F5928] text-white'
+                  }`}
+                >
+                  {isVoiceListening ? (
+                    <>
+                      <MicOff className="w-3.5 h-3.5" />
+                      <span>Dinlemeyi Durdur</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>Sesli Komut</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowVoiceHelpModal(true)}
+                  title="Sesli Komut Rehberi"
+                  className="p-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+              </div>
+
               {/* Barcode Scanner Input */}
               <form onSubmit={handleBarcodeSubmit} className="flex items-center gap-2">
                 <div className="relative">
@@ -212,7 +620,7 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                     onChange={(e) => setBarcodeInput(e.target.value)}
                     placeholder="Barkod (8690001000012)"
                     aria-label="Barkod veya Ürün Kodu Okut"
-                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] pl-8 pr-3 py-1.5 text-xs font-mono w-48"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] pl-8 pr-3 py-1.5 text-xs font-mono w-44"
                   />
                 </div>
                 <button
@@ -737,6 +1145,104 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                 className="px-3.5 py-1.5 rounded bg-[#141413] text-white font-sans font-medium cursor-pointer"
               >
                 Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sesli Komut Rehberi Modal (Web Speech API) */}
+      {showVoiceHelpModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="voice-guide-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-[#D4AF6A]/50 bg-white dark:bg-[#1A1815] text-neutral-900 dark:text-[#F5F2EB] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-[#B86B35]/20 text-[#B86B35] dark:text-[#D4AF6A]">
+                  <Mic className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 id="voice-guide-title" className="font-bold text-sm">
+                    POS Kasa Sesli Komut Rehberi (Web Speech API)
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Kasa personeli elleri meşgulken mikrofona konuşarak veya hızlı düğmelere basarak işlem yapabilir.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVoiceHelpModal(false)}
+                className="p-1 rounded-lg text-neutral-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs max-h-[60vh] overflow-y-auto pr-1">
+              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 space-y-1.5">
+                <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                  <Printer className="w-4 h-4" />
+                  <span>Adisyon &amp; Fiş Yazdırma Komutları</span>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-neutral-600 dark:text-neutral-300">
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Açık adisyonları göster&rdquo;</strong>: Bekleyen tüm masa ve siparişleri listeler.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Son fişi yazdır&rdquo;</strong> veya <strong className="text-neutral-900 dark:text-white">&ldquo;Fatura yazdır&rdquo;</strong>: En son tamamlanan veya seçili siparişin termal fişini yazdırır.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 space-y-1.5">
+                <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                  <QrCode className="w-4 h-4" />
+                  <span>Masa &amp; Satış Seçimi</span>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-neutral-600 dark:text-neutral-300">
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Masa 3&rdquo;</strong> veya <strong className="text-neutral-900 dark:text-white">&ldquo;Masa beş&rdquo;</strong>: İlgili masayı seçer ve açık adisyonunu ekrana getirir.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Hızlı satış&rdquo;</strong>: Tezgah / paket satış adisyonuna geçer.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 space-y-1.5">
+                <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4" />
+                  <span>Ödeme Yöntemi &amp; Tahsilat</span>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-neutral-600 dark:text-neutral-300">
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Nakit&rdquo;</strong> / <strong className="text-neutral-900 dark:text-white">&ldquo;Kredi kartı&rdquo;</strong> / <strong className="text-neutral-900 dark:text-white">&ldquo;Yemek kartı&rdquo;</strong>: Ödeme yöntemini anında seçer.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Tahsilatı onayla&rdquo;</strong> veya <strong className="text-neutral-900 dark:text-white">&ldquo;Hesabı kapat&rdquo;</strong>: Ödeme işlemini onaylar ve siparişi kapatır.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Yüzde on indirim yap&rdquo;</strong>: Adisyona yetkili %10 iskonto tanımlar.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-900 dark:text-white">&ldquo;Sepeti temizle&rdquo;</strong>: POS sepetini sıfırlar.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setShowVoiceHelpModal(false)}
+                className="px-4 py-2 rounded-xl bg-[#B86B35] text-white font-semibold cursor-pointer"
+              >
+                Anladım, Kapat
               </button>
             </div>
           </div>

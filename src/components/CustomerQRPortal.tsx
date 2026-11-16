@@ -84,6 +84,7 @@ import {
   type WaiterServiceCallRecord,
 } from '../core/restaurantEngine';
 import { FooterPWACard } from './BrandIdentity';
+import { RestaurantMapSection } from './RestaurantMapSection';
 import {
   TRANSLATIONS,
   SUPPORTED_LANGUAGES,
@@ -1383,11 +1384,63 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
     }
   };
 
+  // Açılır Pop-up Duyuru & Kampanya State
+  const [showPromoPopup, setShowPromoPopup] = useState(false);
+  const [copiedPromoCode, setCopiedPromoCode] = useState(false);
+
+  useEffect(() => {
+    if (siteCmsConfig.promoPopup?.enabled) {
+      try {
+        const hasSeen = sessionStorage.getItem('oztike_promo_seen');
+        if (siteCmsConfig.promoPopup.showOncePerSession && hasSeen) {
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      const delay = Math.max(1, siteCmsConfig.promoPopup.delaySeconds || 2) * 1000;
+      const timer = setTimeout(() => {
+        setShowPromoPopup(true);
+      }, delay);
+      return () => clearTimeout(timer);
+    }
+  }, [siteCmsConfig.promoPopup]);
+
+  const handleDismissPromoPopup = () => {
+    setShowPromoPopup(false);
+    try {
+      sessionStorage.setItem('oztike_promo_seen', 'true');
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleCategorySelect = (catId: string) => {
+    setSelectedCategoryId(catId);
+    const menuSec = document.getElementById('menu');
+    if (menuSec) {
+      const rect = menuSec.getBoundingClientRect();
+      // Yalnızca menü yukarıda kalmışsa (aşağı kaydırmışsak), menüyü ekranın tepesine (sticky bar: 64px) hizala
+      // Anasayfanın en tepesine fırlatmaz, doğrudan kategori ürünlerinin başında kalır!
+      if (rect.top < 60) {
+        const targetScrollY = window.scrollY + rect.top - 64;
+        window.scrollTo({
+          top: Math.max(0, targetScrollY),
+          behavior: 'smooth',
+        });
+      }
+    }
+  };
+
   return (
     <div
       id="ust"
       dir={t.dir}
-      className="min-h-screen bg-[#120806] text-[#F9F2E7] pb-28 selection:bg-[#D4A359] selection:text-[#1A0B08]"
+      style={{
+        backgroundColor: siteCmsConfig.design.backgroundColor || '#120806',
+        color: '#F9F2E7',
+      }}
+      className="min-h-screen pb-28 selection:bg-[#D4A359] selection:text-[#1A0B08]"
     >
       {/* Üst Duyuru Bandı (Admin Panelden Tam Yönetilebilir) */}
       {siteCmsConfig.announcementBar.enabled && !announcementDismissed && (
@@ -1864,13 +1917,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
           >
             <button
               type="button"
-              onClick={() => {
-                setSelectedCategoryId('ALL');
-                const el = document.getElementById('product-grid-section');
-                if (el) {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-              }}
+              onClick={() => handleCategorySelect('ALL')}
               className={`group shrink-0 snap-start ${
                 isCategoryStickyCompact ? 'w-20 sm:w-24' : 'w-24 sm:w-28'
               } rounded-xl overflow-hidden border transition-all text-left cursor-pointer ${
@@ -1911,13 +1958,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 <button
                   key={cat.id}
                   type="button"
-                  onClick={() => {
-                    setSelectedCategoryId(cat.id);
-                    const el = document.getElementById('product-grid-section');
-                    if (el) {
-                      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }
-                  }}
+                  onClick={() => handleCategorySelect(cat.id)}
                   className={`group shrink-0 snap-start ${
                     isCategoryStickyCompact ? 'w-20 sm:w-24' : 'w-24 sm:w-28'
                   } rounded-xl overflow-hidden border transition-all text-left cursor-pointer ${
@@ -1957,7 +1998,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       {/* =====================================================================
           4. ANA İÇERİK: ÜRÜN KARTLARI (+ / - ADET ÇOĞALTMA & ÖZELLEŞTİRME)
       ===================================================================== */}
-      <main className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-5 space-y-8">
+      <main className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-5 space-y-8 min-h-[85vh]">
 
         {/* Ürün Listesi Grid */}
         <div id="product-grid-section" className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -2438,6 +2479,15 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Gelişmiş Harita & Çoklu Navigasyon Servisleri (Google Maps, Google Navigasyon, Apple Maps, Yandex, Waze) */}
+          <div className="py-2">
+            <RestaurantMapSection
+              mapSettings={siteCmsConfig.mapSettings}
+              contact={siteCmsConfig.contact}
+              lang={currentLang}
+            />
           </div>
 
           {/* En Alt Çalışan PWA Uygulama İndirme Butonu & Kurulum Kartı (iOS / Android / PC) */}
@@ -4966,6 +5016,90 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
           </button>
         </div>
       </nav>
+
+      {/* =====================================================================
+          AÇILIR POP-UP DUYURU & KAMPANYA MODALI (PROMO POPUP)
+      ===================================================================== */}
+      {showPromoPopup && siteCmsConfig.promoPopup?.enabled && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="relative w-full max-w-md rounded-3xl border-2 border-[#D4A359] bg-gradient-to-b from-[#22100C] to-[#120806] text-[#FFF6E9] p-6 shadow-2xl overflow-hidden space-y-4">
+            {/* Kapat Butonu */}
+            <button
+              type="button"
+              onClick={handleDismissPromoPopup}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-black/60 border border-[#D4A359]/30 text-neutral-300 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+              aria-label="Kapat"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Rozet */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#D4A359]/20 border border-[#D4A359]/40 text-[#F5D69B] text-xs font-bold uppercase tracking-wider">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{siteCmsConfig.promoPopup.badgeText || 'Özel Fırsat'}</span>
+            </div>
+
+            {/* Görsel */}
+            {siteCmsConfig.promoPopup.imageUrl && (
+              <div className="w-full h-44 rounded-2xl overflow-hidden border border-[#D4A359]/30 bg-black/40">
+                <img
+                  src={siteCmsConfig.promoPopup.imageUrl}
+                  alt={siteCmsConfig.promoPopup.titleTr}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+
+            {/* Başlık ve Metin */}
+            <div className="space-y-1.5 text-center">
+              <h3 className="text-xl font-black text-[#F5D69B]">
+                {siteCmsConfig.promoPopup.titleTr || 'ÖzTike Lezzet Kampanyası'}
+              </h3>
+              <p className="text-xs text-[#C4AC95] leading-relaxed">
+                {siteCmsConfig.promoPopup.bodyTr || 'Gaziantep Şahinbey zırh kıyması ve meşe közünde taze kuzu ciğeri siparişinizde geçerli indirim fırsatını kaçırmayın!'}
+              </p>
+            </div>
+
+            {/* Kupon Kodu Alanı */}
+            {siteCmsConfig.promoPopup.couponCode && (
+              <div className="rounded-2xl border border-dashed border-[#D4A359]/60 bg-[#160805] p-3 flex items-center justify-between gap-2">
+                <div className="text-left">
+                  <div className="text-[10px] text-neutral-400 font-semibold uppercase">İndirim Kuponu</div>
+                  <div className="font-mono font-bold text-sm text-[#F5D69B]">
+                    {siteCmsConfig.promoPopup.couponCode}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (navigator.clipboard) {
+                      void navigator.clipboard.writeText(siteCmsConfig.promoPopup.couponCode);
+                    }
+                    setCopiedPromoCode(true);
+                    setSelectedCouponCode(siteCmsConfig.promoPopup.couponCode);
+                    showToast('success', 'Kupon Uygulandı', `${siteCmsConfig.promoPopup.couponCode} kupon kodu sepetinize tanımlandı.`);
+                    setTimeout(() => setCopiedPromoCode(false), 2500);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-[#D4A359] text-[#140806] font-bold text-xs hover:bg-[#C5A059] cursor-pointer transition-colors"
+                >
+                  {copiedPromoCode ? '✓ Tanımlandı' : 'Kopyala & Kullan'}
+                </button>
+              </div>
+            )}
+
+            {/* Aksiyon Butonları */}
+            <div className="pt-2 flex gap-3">
+              <button
+                type="button"
+                onClick={handleDismissPromoPopup}
+                className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#140806] font-extrabold text-sm hover:brightness-110 cursor-pointer shadow-lg"
+              >
+                Menüyü İncele &amp; Sipariş Ver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

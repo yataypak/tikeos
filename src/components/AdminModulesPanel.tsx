@@ -32,6 +32,16 @@ import {
   Star,
   MessageSquareWarning,
   Building2,
+  Settings,
+  Sliders,
+  Eye,
+  EyeOff,
+  Activity,
+  Globe,
+  Radio,
+  Network,
+  ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -76,6 +86,9 @@ import {
   generateReceiptAndInvoiceNumbers,
 } from '../core/restaurantEngine';
 import { AdminSiteBuilderManager } from './AdminSiteBuilderManager';
+import { AdminArchiveManager } from './AdminArchiveManager';
+import { AdminPwaManager } from './AdminPwaManager';
+import { AdminMapManager } from './AdminMapManager';
 import { type SiteCmsConfig } from '../data/siteCmsStore';
 import { printThermalReceipt, downloadThermalReceiptHtml } from '../utils/receiptPrinter';
 
@@ -126,6 +139,8 @@ interface AdminModulesPanelProps {
   integrations: IntegrationPluginItem[];
   onTestIntegration: (id: string) => void;
   onToggleIntegrationMode: (id: string) => void;
+  onUpdateIntegration?: (integration: IntegrationPluginItem) => void;
+  onToggleIntegrationActive?: (id: string) => void;
   branches: BranchItem[];
   onToggleBranchActive: (id: string) => void;
   onAddBranch?: (branch: Omit<BranchItem, 'id' | 'dailyRevenue' | 'activeTables'>) => void;
@@ -156,6 +171,22 @@ interface AdminModulesPanelProps {
   ) => void;
   onSettleOrderPayment?: (orderId: string, amount: number, method: string) => void;
   onIssueOrderReceiptAndInvoice?: (orderId: string) => void;
+  onDeleteOrder?: (id: string) => void;
+  onDeleteWaiterCall?: (id: string) => void;
+  onAddTable?: (table: Omit<DiningTableItem, 'id' | 'qrToken' | 'qrRevoked'>) => void;
+  onUpdateTable?: (table: DiningTableItem) => void;
+  onDeleteTable?: (id: string) => void;
+  onResetTableBill?: (tableId: string) => void;
+  onAddStockItem?: (item: Omit<StockItem, 'id'>) => void;
+  onUpdateStockItem?: (item: StockItem) => void;
+  onDeleteStockItem?: (id: string) => void;
+  onUpdateReservation?: (res: ReservationItem) => void;
+  onDeleteReservation?: (id: string) => void;
+  onUpdateCustomer?: (customer: CustomerRecord) => void;
+  onDeleteCustomer?: (id: string) => void;
+  onToggleCustomerBlock?: (id: string) => void;
+  onUpdateCampaign?: (campaign: CampaignRecord) => void;
+  onDeleteCampaign?: (id: string) => void;
 }
 
 export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
@@ -200,6 +231,8 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   integrations,
   onTestIntegration,
   onToggleIntegrationMode,
+  onUpdateIntegration,
+  onToggleIntegrationActive,
   branches,
   onToggleBranchActive,
   onAddBranch,
@@ -227,6 +260,22 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   onUpdateCourierDeliveryState,
   onSettleOrderPayment,
   onIssueOrderReceiptAndInvoice,
+  onDeleteOrder,
+  onDeleteWaiterCall,
+  onAddTable,
+  onUpdateTable,
+  onDeleteTable,
+  onResetTableBill,
+  onAddStockItem,
+  onUpdateStockItem,
+  onDeleteStockItem,
+  onUpdateReservation,
+  onDeleteReservation,
+  onUpdateCustomer,
+  onDeleteCustomer,
+  onToggleCustomerBlock,
+  onUpdateCampaign,
+  onDeleteCampaign,
 }) => {
   const [statusToast, setStatusToast] = useState<string | null>(null);
   const [receiptInvoiceModalOrder, setReceiptInvoiceModalOrder] = useState<OrderRecord | null>(null);
@@ -262,6 +311,89 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   const [mod7KitchenAlertMins, setMod7KitchenAlertMins] = useState(14);
   const [mod12AutoReceiptPrint, setMod12AutoReceiptPrint] = useState(true);
   const [mod12DefaultPosMethod, setMod12DefaultPosMethod] = useState<'Nakit' | 'Kredi Kartı (POS)' | 'Yemek Kartı'>('Kredi Kartı (POS)');
+
+  // Module 31: Advanced Integration & API Settings Modal State
+  const [integrationCategoryFilter, setIntegrationCategoryFilter] = useState<string>('Tümü');
+  const [integrationSearchQuery, setIntegrationSearchQuery] = useState<string>('');
+  const [selectedIntegrationForConfig, setSelectedIntegrationForConfig] = useState<IntegrationPluginItem | null>(null);
+  const [integrationFormConfig, setIntegrationFormConfig] = useState<NonNullable<IntegrationPluginItem['advancedConfig']>>({});
+  const [integrationShowSecret, setIntegrationShowSecret] = useState(false);
+  const [integrationActiveTab, setIntegrationActiveTab] = useState<'api' | 'network' | 'custom' | 'test'>('api');
+  const [integrationPingStatus, setIntegrationPingStatus] = useState<{
+    status: 'idle' | 'testing' | 'success' | 'error';
+    latencyMs?: number;
+    message?: string;
+  }>({ status: 'idle' });
+
+  const handleOpenIntegrationConfig = (intg: IntegrationPluginItem) => {
+    setSelectedIntegrationForConfig(intg);
+    setIntegrationShowSecret(false);
+    setIntegrationActiveTab('api');
+    setIntegrationPingStatus({ status: 'idle' });
+    setIntegrationFormConfig({
+      apiKey: intg.advancedConfig?.apiKey || (intg.settings?.apiKeyMasked as string) || (intg.settings?.restaurantSecretKey as string) || 'live-sec-2026-oztike-token',
+      apiSecret: intg.advancedConfig?.apiSecret || 'sk_live_9921_oztike_ciger_shb_enc',
+      merchantId: intg.advancedConfig?.merchantId || (intg.settings?.merchantId as string) || (intg.settings?.storeId as string) || (intg.settings?.chainCode as string) || `OZT-${intg.code.toUpperCase()}-27`,
+      terminalId: intg.advancedConfig?.terminalId || 'TRM-POS-01',
+      endpointUrl: intg.advancedConfig?.endpointUrl || (intg.settings?.webhookUrl as string) || `https://api.oztikeciger.com.tr/v2/${intg.code}`,
+      ipAddress: intg.advancedConfig?.ipAddress || (intg.settings?.printerIp as string) || '192.168.1.201',
+      port: intg.advancedConfig?.port || (intg.settings?.port as number) || 9100,
+      timeoutMs: intg.advancedConfig?.timeoutMs || 4500,
+      environment: intg.mode === 'Canlı (Live)' ? 'Production' : 'Sandbox',
+      threeDSecure: intg.advancedConfig?.threeDSecure ?? (intg.settings?.threeDSecureRequired !== false),
+      commissionRate: intg.advancedConfig?.commissionRate ?? (intg.settings?.commissionRatePercent as number) ?? 1.89,
+      currency: intg.advancedConfig?.currency || 'TRY',
+      paperWidthMm: intg.advancedConfig?.paperWidthMm || (intg.settings?.paperWidthMm as 58 | 80) || 80,
+      autoCutPaper: intg.advancedConfig?.autoCutPaper ?? (intg.settings?.autoCutPaper !== false),
+      autoPrintReceipt: intg.advancedConfig?.autoPrintReceipt ?? true,
+      kitchenStationRouting: intg.advancedConfig?.kitchenStationRouting || 'Ocakbaşı & Zırh Hattı',
+      autoConfirmOrders: intg.advancedConfig?.autoConfirmOrders ?? (intg.settings?.autoAcceptOrder !== false),
+      defaultPrepMinutes: intg.advancedConfig?.defaultPrepMinutes ?? (intg.settings?.prepTimeMinutes as number) ?? 18,
+      stockSyncEnabled: intg.advancedConfig?.stockSyncEnabled ?? true,
+      eInvoicePrefix: intg.advancedConfig?.eInvoicePrefix || 'ÖZT2026',
+      integratorCompany: intg.advancedConfig?.integratorCompany || (intg.settings?.integrator as string) || 'Uyumsoft / QNB e-Finans',
+      autoIssueOnPayment: intg.advancedConfig?.autoIssueOnPayment ?? true,
+      smsSenderHeader: intg.advancedConfig?.smsSenderHeader || (intg.settings?.senderHeader as string) || 'OZTIKECIGER',
+      templateLanguage: intg.advancedConfig?.templateLanguage || (intg.settings?.templateLanguage as string) || 'tr',
+      webhookUrl: intg.advancedConfig?.webhookUrl || (intg.settings?.webhookUrl as string) || 'https://api.oztikeciger.com.tr/hooks/events',
+      webhookSecret: intg.advancedConfig?.webhookSecret || 'whsec_oztike_hmac_sha256_token',
+      debugLogging: intg.advancedConfig?.debugLogging ?? false,
+      retryAttempts: intg.advancedConfig?.retryAttempts ?? 3,
+      customHeaders: intg.advancedConfig?.customHeaders || '{"X-Restaurant-Branch":"BR-01","X-Source":"POS-Kasa"}',
+      multinetActive: intg.advancedConfig?.multinetActive ?? true,
+      pluxeeActive: intg.advancedConfig?.pluxeeActive ?? true,
+      edenredActive: intg.advancedConfig?.edenredActive ?? true,
+      setcardActive: intg.advancedConfig?.setcardActive ?? true,
+      posTerminalProtocol: intg.advancedConfig?.posTerminalProtocol || 'JSON-RPC',
+    });
+  };
+
+  const handleTestPingIntegration = (intg: IntegrationPluginItem) => {
+    setIntegrationPingStatus({ status: 'testing' });
+    setTimeout(() => {
+      const simulatedLatency = Math.floor(Math.random() * 25) + 18;
+      setIntegrationPingStatus({
+        status: 'success',
+        latencyMs: simulatedLatency,
+        message: `${intg.name} API ve ağ servis bağlantısı doğrulandı! HTTP 200 OK (${simulatedLatency} ms)`,
+      });
+      onTestIntegration(intg.id);
+    }, 500);
+  };
+
+  const handleSaveIntegrationConfig = () => {
+    if (!selectedIntegrationForConfig) return;
+    const updated: IntegrationPluginItem = {
+      ...selectedIntegrationForConfig,
+      mode: integrationFormConfig.environment === 'Production' ? 'Canlı (Live)' : 'Test (Sandbox)',
+      advancedConfig: { ...integrationFormConfig },
+      lastTested: `16 Kas 2026 ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} Doğrulandı`,
+      contractVerified: true,
+    };
+    onUpdateIntegration?.(updated);
+    setStatusToast(`${selectedIntegrationForConfig.name} gelişmiş API ve entegrasyon ayarları başarıyla kaydedildi.`);
+    setSelectedIntegrationForConfig(null);
+  };
 
   // Module 5: Product creation, inline editing & bulk price state + multi-image + Packages
   const [newProdName, setNewProdName] = useState('');
@@ -328,6 +460,55 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   const [branchAddress, setBranchAddress] = useState('');
   const [branchPhone, setBranchPhone] = useState('');
   const [branchIsMain, setBranchIsMain] = useState(false);
+
+  // Module 3: Table Add/Edit States
+  const [tableModalMode, setTableModalMode] = useState<'create' | 'edit' | null>(null);
+  const [tableFormNumber, setTableFormNumber] = useState('');
+  const [tableFormArea, setTableFormArea] = useState<DiningTableItem['area']>('Ana Salon');
+  const [tableFormCapacity, setTableFormCapacity] = useState(4);
+  const [tableFormWaiter, setTableFormWaiter] = useState('Halil Usta');
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+
+  // Module 11: Reservation Edit State
+  const [editingReservation, setEditingReservation] = useState<ReservationItem | null>(null);
+  const [resFormGuests, setResFormGuests] = useState(4);
+  const [resFormDate, setResFormDate] = useState('2026-11-16');
+  const [resFormTime, setResFormTime] = useState('19:30');
+  const [resFormTable, setResFormTable] = useState('Masa 01');
+  const [resFormDeposit, setResFormDeposit] = useState(0);
+  const [resFormSpecial, setResFormSpecial] = useState('');
+
+  // Module 14: Stock Item Add/Edit States
+  const [stockModalMode, setStockModalMode] = useState<'create' | 'edit' | null>(null);
+  const [stockFormName, setStockFormName] = useState('');
+  const [stockFormCategory, setStockFormCategory] = useState<StockItem['category']>('Et ve sakatat');
+  const [stockFormUnit, setStockFormUnit] = useState<StockItem['unit']>('kg');
+  const [stockFormCurrent, setStockFormCurrent] = useState(15);
+  const [stockFormMin, setStockFormMin] = useState(5);
+  const [stockFormCost, setStockFormCost] = useState(620);
+  const [stockFormSupplier, setStockFormSupplier] = useState('Gaziantep Kasaplar Hali');
+  const [stockFormLot, setStockFormLot] = useState('LOT-2026-08');
+  const [stockFormExpiry, setStockFormExpiry] = useState('2026-11-25');
+  const [stockFormWarehouse, setStockFormWarehouse] = useState('Soğuk Hava Deposu');
+  const [editingStockId, setEditingStockId] = useState<string | null>(null);
+
+  // Module 17: Customer Edit States
+  const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
+  const [custEditName, setCustEditName] = useState('');
+  const [custEditPhone, setCustEditPhone] = useState('');
+  const [custEditEmail, setCustEditEmail] = useState('');
+  const [custEditDistrict, setCustEditDistrict] = useState('Şahinbey');
+  const [custEditGroup, setCustEditGroup] = useState<CustomerRecord['group']>('Standart');
+
+  // Module 19: Campaign Edit & Promo Pop-up States
+  const [editingCampaign, setEditingCampaign] = useState<CampaignRecord | null>(null);
+  const [campEditName, setCampEditName] = useState('');
+  const [campEditCode, setCampEditCode] = useState('');
+  const [campEditDiscount, setCampEditDiscount] = useState(15);
+  const [campEditMinOrder, setCampEditMinOrder] = useState(400);
+  const [campEditLimit, setCampEditLimit] = useState(250);
+  const [campEditActive, setCampEditActive] = useState(true);
+  const [showPromoPopupConfig, setShowPromoPopupConfig] = useState(false);
 
   // Module 36: Security RBAC Matrix
   const [rbacRoles, setRbacRoles] = useState<
@@ -1133,6 +1314,19 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       >
                         Para İadesi
                       </button>
+                      {onDeleteOrder && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteOrder(ord.id);
+                            setStatusToast(`${ord.orderNumber} sipariş kaydı silindi (Arşivde saklanıyor).`);
+                          }}
+                          className="px-2.5 py-1 rounded border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 cursor-pointer text-xs"
+                          title="Sipariş kaydını sil"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 inline mr-1" /> Sil
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2080,9 +2274,31 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
 
             {/* Stock Inventory Table */}
             <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
-              <h3 className="text-base font-semibold">
-                Güncel Envanter, Lot/Parti, SKT & Tedarikçi Listesi
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-base font-semibold">
+                  Güncel Envanter, Lot/Parti, SKT & Tedarikçi Listesi
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockModalMode('create');
+                    setEditingStockId(null);
+                    setStockFormName('');
+                    setStockFormCategory('Et ve sakatat');
+                    setStockFormUnit('kg');
+                    setStockFormCurrent(10);
+                    setStockFormMin(5);
+                    setStockFormCost(450);
+                    setStockFormSupplier('Gaziantep Kasaplar Hali');
+                    setStockFormLot(`LOT-${Date.now().toString().slice(-4)}`);
+                    setStockFormExpiry('2026-12-31');
+                    setStockFormWarehouse('Soğuk Hava Deposu');
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-[#B86B35] text-white text-xs font-semibold cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 inline mr-1" /> Yeni Stok Kalemi Ekle
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
@@ -2090,7 +2306,8 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       <th className="py-2 pr-2">Hammadde / Kategori</th>
                       <th className="py-2 px-2">Tedarikçi & Lot</th>
                       <th className="py-2 px-2 text-right">Mevcut / Kritik</th>
-                      <th className="py-2 pl-2 text-right">Birim Maliyet</th>
+                      <th className="py-2 px-2 text-right">Birim Maliyet</th>
+                      <th className="py-2 pl-2 text-right">İşlemler</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200/60 dark:divide-neutral-800">
@@ -2122,8 +2339,46 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                             </span>{' '}
                             <span className="text-neutral-400">/ {st.minStockThreshold}</span>
                           </td>
-                          <td className="py-2.5 pl-2 text-right font-mono tabular-nums font-semibold">
+                          <td className="py-2.5 px-2 text-right font-mono tabular-nums font-semibold">
                             {st.unitCost.toFixed(2)} ₺
+                          </td>
+                          <td className="py-2.5 pl-2 text-right">
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStockModalMode('edit');
+                                  setEditingStockId(st.id);
+                                  setStockFormName(st.name);
+                                  setStockFormCategory(st.category);
+                                  setStockFormUnit(st.unit);
+                                  setStockFormCurrent(st.currentStock);
+                                  setStockFormMin(st.minStockThreshold);
+                                  setStockFormCost(st.unitCost);
+                                  setStockFormSupplier(st.supplierName);
+                                  setStockFormLot(st.lotNumber);
+                                  setStockFormExpiry(st.expiryDate);
+                                  setStockFormWarehouse(st.warehouse);
+                                }}
+                                className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[#B86B35] dark:text-[#D4AF6A] cursor-pointer"
+                                title="Düzenle"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              {onDeleteStockItem && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onDeleteStockItem(st.id);
+                                    setStatusToast(`${st.name} stok kaydı silindi.`);
+                                  }}
+                                  className="p-1 rounded hover:bg-rose-950/20 text-rose-500 cursor-pointer"
+                                  title="Sil"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2133,6 +2388,196 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Stok Kalemi Ekleme / Düzenleme Modalı */}
+          {stockModalMode && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-lg rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
+                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
+                    {stockModalMode === 'create' ? 'Yeni Stok Kalemi Tanımla' : 'Stok Kalemini Düzenle'}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setStockModalMode(null)}
+                    className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="block font-semibold mb-1">Hammadde Adı</label>
+                    <input
+                      type="text"
+                      required
+                      value={stockFormName}
+                      onChange={(e) => setStockFormName(e.target.value)}
+                      placeholder="Örn: Günlük Kuzu Ciğeri"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kategori</label>
+                    <select
+                      value={stockFormCategory}
+                      onChange={(e) => setStockFormCategory(e.target.value as StockItem['category'])}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    >
+                      <option value="Et ve sakatat">Et ve sakatat</option>
+                      <option value="Sebze">Sebze</option>
+                      <option value="Meyve">Meyve</option>
+                      <option value="Süt ürünleri">Süt ürünleri</option>
+                      <option value="Kuru gıda">Kuru gıda</option>
+                      <option value="Baharat">Baharat</option>
+                      <option value="İçecek">İçecek</option>
+                      <option value="Ambalaj">Ambalaj</option>
+                      <option value="Temizlik malzemeleri">Temizlik malzemeleri</option>
+                      <option value="Diğer sarf malzemeleri">Diğer sarf malzemeleri</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Ölçü Birimi</label>
+                    <select
+                      value={stockFormUnit}
+                      onChange={(e) => setStockFormUnit(e.target.value as StockItem['unit'])}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    >
+                      <option value="kg">kg</option>
+                      <option value="gr">gr</option>
+                      <option value="lt">lt</option>
+                      <option value="ml">ml</option>
+                      <option value="adet">adet</option>
+                      <option value="paket">paket</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Mevcut Stok</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      value={stockFormCurrent}
+                      onChange={(e) => setStockFormCurrent(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kritik Eşik</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      value={stockFormMin}
+                      onChange={(e) => setStockFormMin(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Birim Maliyet (₺)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      value={stockFormCost}
+                      onChange={(e) => setStockFormCost(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Tedarikçi Firma</label>
+                    <input
+                      type="text"
+                      value={stockFormSupplier}
+                      onChange={(e) => setStockFormSupplier(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Parti / Lot No</label>
+                    <input
+                      type="text"
+                      value={stockFormLot}
+                      onChange={(e) => setStockFormLot(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Son Kullanma Tarihi</label>
+                    <input
+                      type="date"
+                      value={stockFormExpiry}
+                      onChange={(e) => setStockFormExpiry(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block font-semibold mb-1">Depo Lokasyonu</label>
+                    <input
+                      type="text"
+                      value={stockFormWarehouse}
+                      onChange={(e) => setStockFormWarehouse(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => setStockModalMode(null)}
+                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!stockFormName.trim()) return;
+                      if (stockModalMode === 'create' && onAddStockItem) {
+                        onAddStockItem({
+                          sku: `SKU-${Date.now().toString().slice(-4)}`,
+                          name: stockFormName.trim(),
+                          category: stockFormCategory,
+                          unit: stockFormUnit,
+                          currentStock: stockFormCurrent,
+                          minStockThreshold: stockFormMin,
+                          unitCost: stockFormCost,
+                          supplierId: 'SUP-01',
+                          supplierName: stockFormSupplier,
+                          lotNumber: stockFormLot,
+                          expiryDate: stockFormExpiry,
+                          warehouse: stockFormWarehouse,
+                        });
+                        setStatusToast(`${stockFormName} envantere eklendi.`);
+                      } else if (stockModalMode === 'edit' && onUpdateStockItem && editingStockId) {
+                        const target = stocks.find((s) => s.id === editingStockId);
+                        if (target) {
+                          onUpdateStockItem({
+                            ...target,
+                            name: stockFormName.trim(),
+                            category: stockFormCategory,
+                            unit: stockFormUnit,
+                            currentStock: stockFormCurrent,
+                            minStockThreshold: stockFormMin,
+                            unitCost: stockFormCost,
+                            supplierName: stockFormSupplier,
+                            lotNumber: stockFormLot,
+                            expiryDate: stockFormExpiry,
+                            warehouse: stockFormWarehouse,
+                          });
+                          setStatusToast(`${stockFormName} güncellendi.`);
+                        }
+                      }
+                      setStockModalMode(null);
+                    }}
+                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                  >
+                    Kaydet
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Immutable Stock Movements Ledger */}
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
@@ -2345,8 +2790,15 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                   key={c.id}
                   className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-2 text-xs"
                 >
-                  <div className="flex justify-between font-semibold">
-                    <span>{c.name}</span>
+                  <div className="flex justify-between items-center font-semibold">
+                    <span className="flex items-center gap-1.5">
+                      <span>{c.name}</span>
+                      {c.isBlocked && (
+                        <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-500 text-[10px] font-bold">
+                          Engelli
+                        </span>
+                      )}
+                    </span>
                     <span className="text-[#D4AF6A]">{c.group}</span>
                   </div>
                   <div className="text-neutral-500">
@@ -2358,31 +2810,185 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                   <div className="text-[11px] text-neutral-500">
                     KVKK: Onaylı · Pazarlama SMS: {c.marketingSmsApproved ? 'İzinli' : 'İzinsiz (Kapalı)'}
                   </div>
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onAdjustLoyaltyPoints(c.id, 100, 'Sadakat ödül puanı kazanımı');
-                        setStatusToast(`${c.name} hesabına +100 sadakat puanı eklendi.`);
-                      }}
-                      className="px-2.5 py-1 rounded border border-neutral-300 dark:border-neutral-700"
-                    >
-                      +100 Puan Ekle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onAdjustLoyaltyPoints(c.id, -100, 'Siparişte sadakat puanı harcaması');
-                        setStatusToast(`${c.name} hesabından 100 puan harcandı.`);
-                      }}
-                      className="px-2.5 py-1 rounded border border-neutral-300 dark:border-neutral-700"
-                    >
-                      100 Puan Harca
-                    </button>
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAdjustLoyaltyPoints(c.id, 100, 'Sadakat ödül puanı kazanımı');
+                          setStatusToast(`${c.name} hesabına +100 sadakat puanı eklendi.`);
+                        }}
+                        className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 text-[11px]"
+                      >
+                        +100 Puan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAdjustLoyaltyPoints(c.id, -100, 'Siparişte sadakat puanı harcaması');
+                          setStatusToast(`${c.name} hesabından 100 puan harcandı.`);
+                        }}
+                        className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 text-[11px]"
+                      >
+                        -100 Puan
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      {onToggleCustomerBlock && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onToggleCustomerBlock(c.id);
+                            setStatusToast(
+                              c.isBlocked ? `${c.name} engeli kaldırıldı.` : `${c.name} engellendi.`
+                            );
+                          }}
+                          className={`px-2 py-0.5 rounded text-[11px] font-semibold cursor-pointer border ${
+                            c.isBlocked
+                              ? 'border-emerald-600/50 text-emerald-500 hover:bg-emerald-950/20'
+                              : 'border-amber-600/50 text-amber-500 hover:bg-amber-950/20'
+                          }`}
+                        >
+                          {c.isBlocked ? 'Engeli Aç' : 'Engelle'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingCustomer(c);
+                          setCustEditName(c.name);
+                          setCustEditPhone(c.phone);
+                          setCustEditEmail(c.email);
+                          setCustEditDistrict(c.district);
+                          setCustEditGroup(c.group);
+                        }}
+                        className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[#B86B35] dark:text-[#D4AF6A] cursor-pointer"
+                        title="Düzenle"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      {onDeleteCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteCustomer(c.id);
+                            setStatusToast(`${c.name} müşteri kaydı silindi.`);
+                          }}
+                          className="p-1 rounded hover:bg-rose-950/20 text-rose-500 cursor-pointer"
+                          title="Sil"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
+
+            {/* Müşteri Düzenleme Modalı */}
+            {editingCustomer && (
+              <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                    <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
+                      Müşteri Kaydını Düzenle: {editingCustomer.name}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setEditingCustomer(null)}
+                      className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block font-semibold mb-1">Ad Soyad</label>
+                      <input
+                        type="text"
+                        value={custEditName}
+                        onChange={(e) => setCustEditName(e.target.value)}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-semibold mb-1">Telefon</label>
+                        <input
+                          type="tel"
+                          value={custEditPhone}
+                          onChange={(e) => setCustEditPhone(e.target.value)}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">İlçe / Bölge</label>
+                        <input
+                          type="text"
+                          value={custEditDistrict}
+                          onChange={(e) => setCustEditDistrict(e.target.value)}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">E-posta</label>
+                      <input
+                        type="email"
+                        value={custEditEmail}
+                        onChange={(e) => setCustEditEmail(e.target.value)}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Müşteri Grubu</label>
+                      <select
+                        value={custEditGroup}
+                        onChange={(e) => setCustEditGroup(e.target.value as CustomerRecord['group'])}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      >
+                        <option value="Standart">Standart</option>
+                        <option value="VIP Misafir">VIP Misafir</option>
+                        <option value="Kurumsal">Kurumsal</option>
+                        <option value="Sadık Müşteri">Sadık Müşteri</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <button
+                      type="button"
+                      onClick={() => setEditingCustomer(null)}
+                      className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
+                    >
+                      İptal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!custEditName.trim()) return;
+                        if (onUpdateCustomer && editingCustomer) {
+                          onUpdateCustomer({
+                            ...editingCustomer,
+                            name: custEditName.trim(),
+                            phone: custEditPhone.trim(),
+                            email: custEditEmail.trim(),
+                            district: custEditDistrict.trim(),
+                            group: custEditGroup,
+                          });
+                          setStatusToast(`${custEditName} bilgileri güncellendi.`);
+                        }
+                        setEditingCustomer(null);
+                      }}
+                      className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                    >
+                      Kaydet
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Müşteri Yorumları ve Şikayetleri Gelen Kutusu */}
@@ -2574,11 +3180,320 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                   <div className="text-neutral-500">
                     Min. Sepet: {camp.minOrderAmount} ₺ · Kullanım: {camp.usedCount}/{camp.usageLimit}
                   </div>
-                  <div className="text-[11px] text-neutral-500">
-                    {camp.startDate} – {camp.endDate} · {camp.isActive ? 'Yayında' : 'Pasif'}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <div className="text-[11px] text-neutral-500">
+                      {camp.startDate} – {camp.endDate} · {camp.isActive ? 'Yayında' : 'Pasif'}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingCampaign(camp);
+                          setCampEditName(camp.name);
+                          setCampEditCode(camp.couponCode);
+                          setCampEditDiscount(camp.discountValue);
+                          setCampEditMinOrder(camp.minOrderAmount);
+                          setCampEditLimit(camp.usageLimit);
+                          setCampEditActive(camp.isActive);
+                        }}
+                        className="px-2 py-0.5 rounded border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] hover:bg-[#B86B35]/10 text-[11px] font-semibold cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3 inline mr-0.5" /> Düzenle
+                      </button>
+                      {onDeleteCampaign && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteCampaign(camp.id);
+                            setStatusToast(`${camp.name} kampanyası silindi.`);
+                          }}
+                          className="px-2 py-0.5 rounded border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 text-[11px] cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3 inline mr-0.5" /> Sil
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
+            </div>
+
+            {/* Kampanya Düzenleme Modalı */}
+            {editingCampaign && (
+              <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                    <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
+                      Kampanyayı Düzenle: {editingCampaign.name}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setEditingCampaign(null)}
+                      className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block font-semibold mb-1">Kampanya Adı</label>
+                      <input
+                        type="text"
+                        value={campEditName}
+                        onChange={(e) => setCampEditName(e.target.value)}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-semibold mb-1">Kupon Kodu</label>
+                        <input
+                          type="text"
+                          value={campEditCode}
+                          onChange={(e) => setCampEditCode(e.target.value)}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">İndirim (%)</label>
+                        <input
+                          type="number"
+                          value={campEditDiscount}
+                          onChange={(e) => setCampEditDiscount(Number(e.target.value))}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Min. Sepet (₺)</label>
+                        <input
+                          type="number"
+                          value={campEditMinOrder}
+                          onChange={(e) => setCampEditMinOrder(Number(e.target.value))}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Kullanım Limiti</label>
+                        <input
+                          type="number"
+                          value={campEditLimit}
+                          onChange={(e) => setCampEditLimit(Number(e.target.value))}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                        />
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 pt-1 font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={campEditActive}
+                        onChange={(e) => setCampEditActive(e.target.checked)}
+                      />
+                      <span>Kampanya Yayında (Aktif)</span>
+                    </label>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <button
+                      type="button"
+                      onClick={() => setEditingCampaign(null)}
+                      className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
+                    >
+                      İptal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!campEditName.trim()) return;
+                        if (onUpdateCampaign && editingCampaign) {
+                          onUpdateCampaign({
+                            ...editingCampaign,
+                            name: campEditName.trim(),
+                            couponCode: campEditCode.trim().toUpperCase(),
+                            discountValue: campEditDiscount,
+                            minOrderAmount: campEditMinOrder,
+                            usageLimit: campEditLimit,
+                            isActive: campEditActive,
+                          });
+                          setStatusToast(`${campEditName} kampanyası güncellendi.`);
+                        }
+                        setEditingCampaign(null);
+                      }}
+                      className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                    >
+                      Kaydet
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Popup Açılan Duyuru / Kampanya Banner Yönetimi */}
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-[#B86B35]" />
+                <div>
+                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
+                    Açılır Pop-up Duyuru &amp; Kampanya Bannerı (Modal Popup)
+                  </h4>
+                  <p className="text-neutral-500">
+                    Müşteri vitrin sitesine girdiğinde otomatik açılan görsel ve kuponlu kampanya penceresini yönetin.
+                  </p>
+                </div>
+              </div>
+              <label className="inline-flex items-center gap-2 font-bold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={siteCmsConfig.promoPopup.enabled}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, enabled: e.target.checked },
+                    }))
+                  }
+                />
+                <span className={siteCmsConfig.promoPopup.enabled ? 'text-emerald-500' : 'text-neutral-500'}>
+                  {siteCmsConfig.promoPopup.enabled ? 'Pop-up Açık (Aktif)' : 'Pop-up Kapalı'}
+                </span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block font-semibold mb-1">Pop-up Başlığı (TR)</label>
+                <input
+                  type="text"
+                  value={siteCmsConfig.promoPopup.titleTr}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, titleTr: e.target.value },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Rozet Metni</label>
+                <input
+                  type="text"
+                  value={siteCmsConfig.promoPopup.badgeText}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, badgeText: e.target.value },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Kupon Kodu</label>
+                <input
+                  type="text"
+                  value={siteCmsConfig.promoPopup.couponCode}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, couponCode: e.target.value },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Açılma Gecikmesi (Saniye)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={siteCmsConfig.promoPopup.delaySeconds}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, delaySeconds: Number(e.target.value) },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block font-semibold mb-1">Kampanya Açıklaması (TR)</label>
+                <input
+                  type="text"
+                  value={siteCmsConfig.promoPopup.bodyTr}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, bodyTr: e.target.value },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block font-semibold mb-1">Pop-up Görseli</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={siteCmsConfig.promoPopup.imageUrl}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        promoPopup: { ...prev.promoPopup, imageUrl: e.target.value },
+                      }))
+                    }
+                    className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono text-[11px]"
+                  />
+                  <label className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 font-semibold cursor-pointer">
+                    <Upload className="w-3.5 h-3.5 inline mr-1" /> Yükle
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            if (reader.result) {
+                              onUpdateSiteCmsConfig((prev) => ({
+                                ...prev,
+                                promoPopup: { ...prev.promoPopup, imageUrl: String(reader.result) },
+                              }));
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={siteCmsConfig.promoPopup.showOncePerSession}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      promoPopup: { ...prev.promoPopup, showOncePerSession: e.target.checked },
+                    }))
+                  }
+                />
+                <span>Tarayıcı oturumu başına yalnızca 1 kez göster (Kapatılınca tekrar açılmaz)</span>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setStatusToast('Pop-up kampanya ayarları kaydedildi ve yayına alındı.')}
+                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+              >
+                Pop-up Ayarlarını Kaydet
+              </button>
             </div>
           </div>
         </div>
@@ -2615,35 +3530,177 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                 <div className="text-neutral-500">
                   Özel İstek: {res.specialRequests || 'Belirtilmedi'} · Kapora: {res.depositAmount} ₺
                 </div>
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {(
-                    [
-                      { st: 'confirmed', label: 'Onayla' },
-                      { st: 'completed', label: 'Masaya Alındı' },
-                      { st: 'no_show', label: 'Gelmedi (No-Show)' },
-                      { st: 'cancelled', label: 'İptal Et' },
-                    ] as const
-                  ).map((btn) => (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                  <div className="flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        { st: 'confirmed', label: 'Onayla' },
+                        { st: 'completed', label: 'Masaya Alındı' },
+                        { st: 'no_show', label: 'Gelmedi' },
+                        { st: 'cancelled', label: 'İptal Et' },
+                      ] as const
+                    ).map((btn) => (
+                      <button
+                        key={btn.st}
+                        type="button"
+                        onClick={() => {
+                          onUpdateReservationStatus(res.id, btn.st);
+                          setStatusToast(`Rezervasyon durumu "${btn.label}" olarak güncellendi.`);
+                        }}
+                        className={`px-2 py-0.5 rounded text-[11px] border ${
+                          res.status === btn.st
+                            ? 'bg-[#B86B35] text-white border-[#B86B35]'
+                            : 'border-neutral-300 dark:border-neutral-700'
+                        }`}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
                     <button
-                      key={btn.st}
                       type="button"
                       onClick={() => {
-                        onUpdateReservationStatus(res.id, btn.st);
-                        setStatusToast(`Rezervasyon durumu "${btn.label}" olarak güncellendi.`);
+                        setEditingReservation(res);
+                        setResFormGuests(res.guestCount);
+                        setResFormDate(res.date);
+                        setResFormTime(res.time);
+                        setResFormTable(res.tableNumber);
+                        setResFormDeposit(res.depositAmount);
+                        setResFormSpecial(res.specialRequests || '');
                       }}
-                      className={`px-2.5 py-1 rounded border ${
-                        res.status === btn.st
-                          ? 'bg-[#B86B35] text-white border-[#B86B35]'
-                          : 'border-neutral-300 dark:border-neutral-700'
-                      }`}
+                      className="px-2 py-0.5 rounded border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] hover:bg-[#B86B35]/10 cursor-pointer text-[11px] font-semibold"
                     >
-                      {btn.label}
+                      <Edit3 className="w-3 h-3 inline mr-0.5" /> Düzenle
                     </button>
-                  ))}
+                    {onDeleteReservation && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteReservation(res.id);
+                          setStatusToast(`${res.customerName} rezervasyonu silindi.`);
+                        }}
+                        className="px-2 py-0.5 rounded border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 cursor-pointer text-[11px]"
+                      >
+                        <Trash2 className="w-3 h-3 inline mr-0.5" /> Sil
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {/* Rezervasyon Düzenleme Modalı */}
+          {editingReservation && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
+                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
+                    Rezervasyonu Düzenle: {editingReservation.customerName}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setEditingReservation(null)}
+                    className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Tarih</label>
+                    <input
+                      type="date"
+                      value={resFormDate}
+                      onChange={(e) => setResFormDate(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Saat</label>
+                    <input
+                      type="time"
+                      value={resFormTime}
+                      onChange={(e) => setResFormTime(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kişi Sayısı</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={resFormGuests}
+                      onChange={(e) => setResFormGuests(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Masa No</label>
+                    <input
+                      type="text"
+                      value={resFormTable}
+                      onChange={(e) => setResFormTable(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block font-semibold mb-1">Kapora Tutarı (₺)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={resFormDeposit}
+                      onChange={(e) => setResFormDeposit(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block font-semibold mb-1">Özel İstek / Not</label>
+                    <input
+                      type="text"
+                      value={resFormSpecial}
+                      onChange={(e) => setResFormSpecial(e.target.value)}
+                      placeholder="Örn: Bebek sandalyesi, ocakbaşı önü masa"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => setEditingReservation(null)}
+                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onUpdateReservation && editingReservation) {
+                        onUpdateReservation({
+                          ...editingReservation,
+                          guestCount: resFormGuests,
+                          date: resFormDate,
+                          time: resFormTime,
+                          tableNumber: resFormTable,
+                          depositAmount: resFormDeposit,
+                          specialRequests: resFormSpecial,
+                        });
+                        setStatusToast(`${editingReservation.customerName} rezervasyonu güncellendi.`);
+                      }
+                      setEditingReservation(null);
+                    }}
+                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                  >
+                    Kaydet
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2694,7 +3751,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       Not: {call.customNote}
                     </div>
                   )}
-                  {call.status !== 'Tamamlandı' && (
+                  {call.status !== 'Tamamlandı' ? (
                     <div className="flex flex-wrap gap-2 pt-1">
                       <button
                         type="button"
@@ -2717,6 +3774,21 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                         Servisi Tamamla
                       </button>
                     </div>
+                  ) : (
+                    onDeleteWaiterCall && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteWaiterCall(call.id);
+                            setStatusToast(`${call.tableNumber} tamamlanan çağrı kaydı silindi.`);
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 cursor-pointer text-[11px]"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 inline mr-1" /> Çağrı Kaydını Sil
+                        </button>
+                      </div>
+                    )
                   )}
                 </div>
               ))}
@@ -2725,119 +3797,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
         </div>
       )}
 
-      {/* =====================================================================
-          MODÜL 20: PERSONEL, YETKİLENDİRME (RBAC) & VARDİYALAR (SADECE PERSONEL)
-      ===================================================================== */}
-      {activeModuleId === 20 && (
-        <div className="space-y-6">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!staffName.trim()) return;
-              onAddStaff({
-                name: staffName.trim(),
-                role: staffRole,
-                phone: staffPhone.trim() || '0532 000 00 00',
-                email: `${staffName.toLowerCase().replace(/\s+/g, '.')}@oztikeciger.com.tr`,
-                branch: 'Merkez Şube',
-                shift: '11:00 - 23:00',
-                twoFactorEnabled: true,
-                activeSessionDevice: 'Yeni Kayıt · Onay Bekliyor',
-                isActive: true,
-              });
-              setStaffName('');
-              setStaffPhone('');
-              setStatusToast('Yeni personel ve rol yetkisi tanımlandı.');
-            }}
-            className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3 text-xs"
-          >
-            <h3 className="text-base font-semibold">
-              Personel Kaydı, Rol Yetkilendirme (RBAC) & Vardiya Atama
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <input
-                type="text"
-                required
-                value={staffName}
-                onChange={(e) => setStaffName(e.target.value)}
-                placeholder="Personel Ad Soyad"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <select
-                value={staffRole}
-                onChange={(e) => setStaffRole(e.target.value as StaffRoleName)}
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              >
-                {[
-                  'Süper Yönetici',
-                  'İşletme Müdürü',
-                  'Şube Müdürü',
-                  'Kasiyer',
-                  'Garson',
-                  'Mutfak',
-                  'Kurye',
-                  'Depo Sorumlusu',
-                  'Muhasebe',
-                  'İçerik Editörü',
-                ].map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="tel"
-                value={staffPhone}
-                onChange={(e) => setStaffPhone(e.target.value)}
-                placeholder="Telefon"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold"
-              >
-                Personel Ekle
-              </button>
-            </div>
-          </form>
-
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5">
-            <h3 className="text-base font-semibold mb-3">
-              Personel Kadrosu, Vardiya Saatleri, 2FA & Cihaz Oturumları ({staff.length})
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-500">
-                    <th className="py-2 pr-3">Ad Soyad</th>
-                    <th className="py-2 px-3">Rol</th>
-                    <th className="py-2 px-3">Vardiya</th>
-                    <th className="py-2 px-3">Aktif Cihaz / 2FA</th>
-                    <th className="py-2 pl-3 text-right">Günlük Performans</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-200/60 dark:divide-neutral-800">
-                  {staff.map((st) => (
-                    <tr key={st.id}>
-                      <td className="py-2.5 pr-3 font-semibold">{st.name}</td>
-                      <td className="py-2.5 px-3 text-[#B86B35] dark:text-[#D4AF6A] font-medium">
-                        {st.role}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono">{st.shift}</td>
-                      <td className="py-2.5 px-3 text-neutral-500">
-                        {st.activeSessionDevice} · {st.twoFactorEnabled ? '2FA Aktif' : 'PIN'}
-                      </td>
-                      <td className="py-2.5 pl-3 text-right font-mono tabular-nums">
-                        {st.ordersHandledToday} Sipariş · {st.salesToday.toLocaleString('tr-TR')} ₺
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODÜL 20 (Personel vardiyalar) kullanıcı talebiyle kaldırılmıştır */}
 
       {/* =====================================================================
           MODÜL 13: ÖDEMELER, POS TAHSİLAT & E-FATURA (SADECE ÖDEMELER)
@@ -3128,73 +4088,201 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       )}
 
       {/* =====================================================================
-          MODÜL 31: ENTEGRASYONLAR & EKLENTİ MERKEZİ
+          MODÜL 31: ENTEGRASYONLAR & EKLENTİ MERKEZİ (GELİŞMİŞ API & YAPILANDIRMA)
       ===================================================================== */}
       {activeModuleId === 31 && (
         <div className="space-y-6">
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-base font-semibold">
-                  Ödeme, Kurye ve POS Entegrasyonları
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-[#B86B35] dark:text-[#D4AF6A]" />
+                  <span>31. Ödeme, POS, Kurye, Yazıcı &amp; Eklenti Yönetim Merkezi</span>
                 </h3>
-                <p className="text-xs text-neutral-500">
-                  Aktif POS, muhasebe, kurye ve mesajlaşma entegrasyonlarınızı yönetin ve bağlantıları test edin.
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Tüm ödeme geçitleri, fiziksel POS cihazları, yemek platformları, termal fiş yazıcıları ve e-Fatura API servislerini tek ekrandan yapılandırın.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => triggerAiAnalysis('Entegrasyon ve Günlük Operasyon Özeti')}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-[#B86B35] text-white cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>AI Operasyon Özeti</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => triggerAiAnalysis('Entegrasyon ve Günlük Operasyon Özeti')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#B86B35] text-white cursor-pointer shadow-sm"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>AI Entegrasyon Özeti</span>
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {integrations.map((intg) => (
-                <div
-                  key={intg.id}
-                  className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 flex flex-col justify-between gap-3 text-xs"
-                >
-                  <div>
-                    <div className="flex items-center justify-between text-[11px] text-neutral-500">
-                      <span>{intg.category}</span>
-                      <span className="font-mono">v{intg.version}</span>
-                    </div>
-                    <div className="font-semibold text-sm mt-1">{intg.name}</div>
-                    <div className="font-mono text-[11px] text-neutral-500 mt-1">
-                      Yetki: {intg.scope}
-                    </div>
-                    <div className="text-[11px] text-neutral-500 mt-1">
-                      Mod: <strong>{intg.mode}</strong> · Son Test: {intg.lastTested}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onTestIntegration(intg.id);
-                        setStatusToast(`${intg.name} bağlantı testi başarıyla doğrulandı.`);
-                      }}
-                      className="flex-1 py-1.5 px-2 rounded border border-neutral-300 dark:border-neutral-700 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+            {/* Arama ve Kategori Filtreleri */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {[
+                  'Tümü',
+                  'Ödeme',
+                  'Yemek Platformu',
+                  'Yazıcı',
+                  'SMS',
+                  'WhatsApp Business',
+                  'E-belge',
+                  'Muhasebe',
+                  'Harita',
+                  'Güvenlik',
+                ].map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setIntegrationCategoryFilter(cat)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                      integrationCategoryFilter === cat
+                        ? 'bg-[#B86B35] text-white'
+                        : 'border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                type="search"
+                value={integrationSearchQuery}
+                onChange={(e) => setIntegrationSearchQuery(e.target.value)}
+                placeholder="Eklenti veya API ara..."
+                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 text-xs w-48"
+              />
+            </div>
+
+            {/* Entegrasyon Kartları Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+              {integrations
+                .filter(
+                  (intg) =>
+                    integrationCategoryFilter === 'Tümü' ||
+                    intg.category === integrationCategoryFilter ||
+                    (integrationCategoryFilter === 'Ödeme' && (intg.category === 'Ödeme' || intg.code.includes('pos')))
+                )
+                .filter(
+                  (intg) =>
+                    !integrationSearchQuery.trim() ||
+                    `${intg.name} ${intg.code} ${intg.category} ${intg.description || ''}`
+                      .toLowerCase()
+                      .includes(integrationSearchQuery.toLowerCase())
+                )
+                .map((intg) => {
+                  const isEnabled = intg.enabled;
+                  const isLive = intg.mode === 'Canlı (Live)';
+
+                  return (
+                    <div
+                      key={intg.id}
+                      className={`rounded-xl border p-4 flex flex-col justify-between gap-3 text-xs transition-all shadow-xs ${
+                        isEnabled
+                          ? 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A1815]'
+                          : 'border-neutral-300/60 dark:border-neutral-800/60 bg-neutral-100/60 dark:bg-[#141413]/60 opacity-75'
+                      }`}
                     >
-                      Bağlantı Testi
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onToggleIntegrationMode(intg.id);
-                        setStatusToast(`${intg.name} çalışma modu değiştirildi.`);
-                      }}
-                      className="py-1.5 px-2.5 rounded bg-neutral-900 dark:bg-[#F5F2EB] text-white dark:text-[#141413] font-medium cursor-pointer"
-                    >
-                      Mod Değiştir
-                    </button>
-                  </div>
-                </div>
-              ))}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">
+                            {intg.category}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                isLive
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                              }`}
+                            >
+                              {intg.mode}
+                            </span>
+                            <span className="font-mono text-neutral-400 text-[10px]">v{intg.version}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="font-bold text-sm text-neutral-900 dark:text-[#F5F2EB] flex items-center justify-between gap-1">
+                            <span>{intg.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => onToggleIntegrationActive?.(intg.id)}
+                              title={isEnabled ? 'Devre Dışı Bırak' : 'Etkinleştir'}
+                              className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer shrink-0 ${
+                                isEnabled ? 'bg-emerald-600' : 'bg-neutral-400 dark:bg-neutral-700'
+                              }`}
+                            >
+                              <div
+                                className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                                  isEnabled ? 'translate-x-4' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-neutral-500 mt-1 line-clamp-2">
+                            {intg.description || 'Restoran otomasyon ve API bağlantı köprüsü.'}
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg bg-neutral-50 dark:bg-[#141413] p-2 space-y-1 font-mono text-[10px] text-neutral-500">
+                          <div className="flex justify-between">
+                            <span>API Durumu:</span>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                              {intg.advancedConfig?.apiKey ? 'Özel Anahtar Tanımlı' : 'Varsayılan Aktif'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Protokol &amp; Ağ:</span>
+                            <span>
+                              {intg.advancedConfig?.ipAddress
+                                ? `${intg.advancedConfig.ipAddress}:${intg.advancedConfig.port || 9100}`
+                                : intg.advancedConfig?.endpointUrl
+                                ? 'REST / JSON-RPC'
+                                : 'Bulut HTTPS'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Son Doğrulama:</span>
+                            <span className="truncate max-w-[140px]">{intg.lastTested}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenIntegrationConfig(intg)}
+                          className="w-full py-2 px-3 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                        >
+                          <Settings className="w-3.5 h-3.5" />
+                          <span>Gelişmiş Ayarlar &amp; API</span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleTestPingIntegration(intg)}
+                            className="flex-1 py-1.5 px-2 rounded-lg border border-neutral-300 dark:border-neutral-700 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <Activity className="w-3 h-3 text-[#B86B35]" />
+                            <span>Bağlantı Testi</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onToggleIntegrationMode(intg.id);
+                              setStatusToast(`${intg.name} çalışma modu değiştirildi.`);
+                            }}
+                            className="py-1.5 px-2.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer text-[11px]"
+                          >
+                            Mod Değiştir
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           </div>
 
@@ -3787,6 +4875,27 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                     </button>
                   )
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableModalMode('create');
+                    setEditingTableId(null);
+                    setTableFormNumber(`Masa ${String(tables.length + 1).padStart(2, '0')}`);
+                    setTableFormArea(
+                      (selectedFloorArea === 'Tümü' ||
+                      !['Ana Salon', 'Taş Bahçe', 'Bakır Ocakbaşı', 'VIP Aile Salonu'].includes(
+                        selectedFloorArea
+                      )
+                        ? 'Ana Salon'
+                        : selectedFloorArea) as DiningTableItem['area']
+                    );
+                    setTableFormCapacity(4);
+                    setTableFormWaiter('Halil Usta');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#B86B35] text-white text-xs font-bold hover:bg-[#9F5928] cursor-pointer inline-flex items-center gap-1 shadow"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Yeni Masa Ekle
+                </button>
               </div>
             </div>
 
@@ -4076,16 +5185,177 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       <button
                         type="button"
                         onClick={() => onSwitchWorkspaceView('pos')}
-                        className="w-full py-2.5 rounded-xl bg-[#B86B35] text-white font-bold text-xs cursor-pointer"
+                        className="w-full py-2.5 rounded-xl bg-[#B86B35] text-white font-bold text-xs cursor-pointer hover:bg-[#9F5928]"
                       >
                         POS Kasada Masa Adisyonunu Aç
                       </button>
+
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTableModalMode('edit');
+                            setEditingTableId(selectedTbl.id);
+                            setTableFormNumber(selectedTbl.number);
+                            setTableFormArea(selectedTbl.area);
+                            setTableFormCapacity(selectedTbl.capacity);
+                            setTableFormWaiter(selectedTbl.waiterName);
+                          }}
+                          className="py-2 px-2.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-semibold hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer inline-flex items-center justify-center gap-1"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" /> Masayı Düzenle
+                        </button>
+
+                        {onResetTableBill && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onResetTableBill(selectedTbl.id);
+                              setStatusToast(`${selectedTbl.number} hesabı sıfırlandı ve masa boşaltıldı.`);
+                            }}
+                            className="py-2 px-2.5 rounded-lg border border-amber-600/50 text-amber-500 hover:bg-amber-950/20 text-xs font-semibold cursor-pointer"
+                            title="Açık adisyonu kapat ve masayı boşalt"
+                          >
+                            Hesabı Sıfırla
+                          </button>
+                        )}
+                      </div>
+
+                      {onDeleteTable && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteTable(selectedTbl.id);
+                            setStatusToast(`${selectedTbl.number} masa kaydı silindi.`);
+                          }}
+                          className="w-full py-2 rounded-lg border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 text-xs font-semibold cursor-pointer inline-flex items-center justify-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Masayı Sistemden Sil
+                        </button>
+                      )}
                     </div>
                   </>
                 );
               })()}
             </div>
           </div>
+
+          {/* Masa Ekleme / Düzenleme Modalı */}
+          {tableModalMode && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
+                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
+                    {tableModalMode === 'create' ? 'Yeni Masa Ekle' : 'Masa Bilgilerini Düzenle'}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setTableModalMode(null)}
+                    className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Masa Adı / No</label>
+                    <input
+                      type="text"
+                      required
+                      value={tableFormNumber}
+                      onChange={(e) => setTableFormNumber(e.target.value)}
+                      placeholder="Örn: Masa 09 veya Bahçe VIP 1"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Restoran Bölgesi</label>
+                    <select
+                      value={tableFormArea}
+                      onChange={(e) => setTableFormArea(e.target.value as DiningTableItem['area'])}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    >
+                      <option value="Ana Salon">Ana Salon</option>
+                      <option value="Taş Bahçe">Taş Bahçe</option>
+                      <option value="Bakır Ocakbaşı">Bakır Ocakbaşı</option>
+                      <option value="VIP Aile Salonu">VIP Aile Salonu</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold mb-1">Kişi Kapasitesi</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={tableFormCapacity}
+                        onChange={(e) => setTableFormCapacity(Number(e.target.value))}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Sorumlu Garson</label>
+                      <input
+                        type="text"
+                        value={tableFormWaiter}
+                        onChange={(e) => setTableFormWaiter(e.target.value)}
+                        placeholder="Örn: Halil Usta"
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => setTableModalMode(null)}
+                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!tableFormNumber.trim()) return;
+                      if (tableModalMode === 'create' && onAddTable) {
+                        onAddTable({
+                          number: tableFormNumber.trim(),
+                          area: tableFormArea,
+                          capacity: tableFormCapacity,
+                          waiterName: tableFormWaiter.trim() || 'Halil Usta',
+                          status: 'Boş',
+                          qrCodeNumber: `QR-${tableFormNumber.toUpperCase().replace(/\s+/g, '')}`,
+                          openBalance: 0,
+                          activeServiceRequests: [],
+                          currentOrderId: null,
+                          billRequested: false,
+                          waiterCalled: false,
+                          mergedWith: null,
+                        });
+                        setStatusToast(`${tableFormNumber} masası eklendi.`);
+                      } else if (tableModalMode === 'edit' && onUpdateTable && editingTableId) {
+                        const target = tables.find((t) => t.id === editingTableId);
+                        if (target) {
+                          onUpdateTable({
+                            ...target,
+                            number: tableFormNumber.trim(),
+                            area: tableFormArea,
+                            capacity: tableFormCapacity,
+                            waiterName: tableFormWaiter.trim() || target.waiterName,
+                          });
+                          setStatusToast(`${tableFormNumber} bilgileri güncellendi.`);
+                        }
+                      }
+                      setTableModalMode(null);
+                    }}
+                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                  >
+                    Kaydet
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -4225,6 +5495,53 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
         </div>
       )}
 
+      {/* =====================================================================
+          MODÜL 40: GEÇMİŞ & GÜN SONU ARŞİVİ
+      ===================================================================== */}
+      {activeModuleId === 40 && (
+        <AdminArchiveManager
+          orders={orders}
+          waiterCalls={waiterCalls}
+          tables={tables}
+          onDeleteOrder={onDeleteOrder}
+          onDeleteWaiterCall={onDeleteWaiterCall}
+          onNotify={(msg) => setStatusToast(msg)}
+        />
+      )}
+
+      {/* =====================================================================
+          MODÜL 41: PWA UYGULAMA YÖNETİMİ
+      ===================================================================== */}
+      {activeModuleId === 41 && (
+        <AdminPwaManager
+          pwaSettings={siteCmsConfig.pwaSettings}
+          onUpdatePwaSettings={(updater) =>
+            onUpdateSiteCmsConfig((prev) => ({
+              ...prev,
+              pwaSettings: updater(prev.pwaSettings),
+            }))
+          }
+          onNotify={(msg) => setStatusToast(msg)}
+        />
+      )}
+
+      {/* =====================================================================
+          MODÜL 42: HARİTA & KONUM YÖNETİMİ
+      ===================================================================== */}
+      {activeModuleId === 42 && (
+        <AdminMapManager
+          mapSettings={siteCmsConfig.mapSettings}
+          contact={siteCmsConfig.contact}
+          onUpdateMapSettings={(updater) =>
+            onUpdateSiteCmsConfig((prev) => ({
+              ...prev,
+              mapSettings: updater(prev.mapSettings),
+            }))
+          }
+          onNotify={(msg) => setStatusToast(msg)}
+        />
+      )}
+
       {/* Otomatik Fiş / e-Fatura (e-Arşiv) Önizleme & Termal Yazdırma Modalı */}
       {receiptInvoiceModalOrder && (
         <div
@@ -4341,6 +5658,747 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               >
                 Kapat
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* =====================================================================
+          GELİŞMİŞ ENTEGRASYON, POS, ÖDEME & API YAPILANDIRMA MODALI (MODÜL 31)
+      ===================================================================== */}
+      {selectedIntegrationForConfig && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="intg-modal-title"
+        >
+          <div className="w-full max-w-2xl rounded-2xl border border-[#D4AF6A]/50 bg-white dark:bg-[#1A1815] text-neutral-900 dark:text-[#F5F2EB] p-6 space-y-4 shadow-2xl my-6">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-[#B86B35]/20 text-[#B86B35] dark:text-[#D4AF6A]">
+                  <Sliders className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 id="intg-modal-title" className="font-bold text-base">
+                      {selectedIntegrationForConfig.name}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A]">
+                      {selectedIntegrationForConfig.category}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    API anahtarları, sunucu adresleri, komisyon oranları ve özel donanım parametreleri
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedIntegrationForConfig(null)}
+                aria-label="Kapat"
+                className="p-1 rounded-lg text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Sekmeleri */}
+            <div className="flex items-center gap-2 border-b border-neutral-200 dark:border-neutral-800 pb-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setIntegrationActiveTab('api')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  integrationActiveTab === 'api'
+                    ? 'bg-[#B86B35] text-white'
+                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+              >
+                🔑 API &amp; Kimlik Doğrulama
+              </button>
+              <button
+                type="button"
+                onClick={() => setIntegrationActiveTab('network')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  integrationActiveTab === 'network'
+                    ? 'bg-[#B86B35] text-white'
+                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+              >
+                🌐 Ağ, IP &amp; Protokol
+              </button>
+              <button
+                type="button"
+                onClick={() => setIntegrationActiveTab('custom')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  integrationActiveTab === 'custom'
+                    ? 'bg-[#B86B35] text-white'
+                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+              >
+                ⚙️ İşletme &amp; Özel Alanlar
+              </button>
+              <button
+                type="button"
+                onClick={() => setIntegrationActiveTab('test')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  integrationActiveTab === 'test'
+                    ? 'bg-[#B86B35] text-white'
+                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+              >
+                📡 Canlı Ping &amp; Test
+              </button>
+            </div>
+
+            {/* TAB 1: API & Kimlik Doğrulama */}
+            {integrationActiveTab === 'api' && (
+              <div className="space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Çalışma Ortamı (Environment)</label>
+                    <select
+                      value={integrationFormConfig.environment || 'Sandbox'}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({
+                          ...prev,
+                          environment: e.target.value as 'Sandbox' | 'Production',
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-medium"
+                    >
+                      <option value="Sandbox">Test (Sandbox / Demo Modu)</option>
+                      <option value="Production">Canlı (Live / Gerçek Ortam)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Üye İşyeri / Mağaza ID (Merchant ID)</label>
+                    <input
+                      type="text"
+                      value={integrationFormConfig.merchantId || ''}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, merchantId: e.target.value }))
+                      }
+                      placeholder="Örn: OZT-IYZ-27001"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1">API Key / Genel Erişim Anahtarı</label>
+                  <input
+                    type="text"
+                    value={integrationFormConfig.apiKey || ''}
+                    onChange={(e) =>
+                      setIntegrationFormConfig((prev) => ({ ...prev, apiKey: e.target.value }))
+                    }
+                    placeholder="pk_live_... veya api_key_token"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-semibold">Secret Key / Gizli İmzalı Şifre</label>
+                    <button
+                      type="button"
+                      onClick={() => setIntegrationShowSecret(!integrationShowSecret)}
+                      className="text-[11px] text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1 cursor-pointer"
+                    >
+                      {integrationShowSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      <span>{integrationShowSecret ? 'Gizle' : 'Göster'}</span>
+                    </button>
+                  </div>
+                  <input
+                    type={integrationShowSecret ? 'text' : 'password'}
+                    value={integrationFormConfig.apiSecret || ''}
+                    onChange={(e) =>
+                      setIntegrationFormConfig((prev) => ({ ...prev, apiSecret: e.target.value }))
+                    }
+                    placeholder="sk_live_... gizli güvenlik anahtarı"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Terminal ID / POS Cihaz Kodu</label>
+                    <input
+                      type="text"
+                      value={integrationFormConfig.terminalId || ''}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, terminalId: e.target.value }))
+                      }
+                      placeholder="TRM-01"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Webhook Secret / HMAC İmzası</label>
+                    <input
+                      type="text"
+                      value={integrationFormConfig.webhookSecret || ''}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, webhookSecret: e.target.value }))
+                      }
+                      placeholder="whsec_..."
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: Ağ & Protokol */}
+            {integrationActiveTab === 'network' && (
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-semibold mb-1">API Endpoint / Servis URL</label>
+                  <input
+                    type="url"
+                    value={integrationFormConfig.endpointUrl || ''}
+                    onChange={(e) =>
+                      setIntegrationFormConfig((prev) => ({ ...prev, endpointUrl: e.target.value }))
+                    }
+                    placeholder="https://api.oztikeciger.com.tr/v2/..."
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Cihaz / Sunucu IP Adresi</label>
+                    <input
+                      type="text"
+                      value={integrationFormConfig.ipAddress || ''}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, ipAddress: e.target.value }))
+                      }
+                      placeholder="192.168.1.201"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Port Numarası</label>
+                    <input
+                      type="number"
+                      value={integrationFormConfig.port || 9100}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, port: Number(e.target.value) }))
+                      }
+                      placeholder="9100"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Zaman Aşımı (Timeout ms)</label>
+                    <input
+                      type="number"
+                      value={integrationFormConfig.timeoutMs || 4500}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, timeoutMs: Number(e.target.value) }))
+                      }
+                      placeholder="4500"
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">İletişim Protokolü</label>
+                    <select
+                      value={integrationFormConfig.posTerminalProtocol || 'JSON-RPC'}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({
+                          ...prev,
+                          posTerminalProtocol: e.target.value as any,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-medium"
+                    >
+                      <option value="JSON-RPC">JSON-RPC over HTTP / WebSocket</option>
+                      <option value="REST">REST API (JSON Payload)</option>
+                      <option value="TCP-Socket">Raw TCP / ESC-POS Socket</option>
+                      <option value="Serial-COM">Seri Port (RS232 / USB COM)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Hata Durumunda Tekrar Deneme Sayısı</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={integrationFormConfig.retryAttempts || 3}
+                      onChange={(e) =>
+                        setIntegrationFormConfig((prev) => ({ ...prev, retryAttempts: Number(e.target.value) }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1">Özel İstek Başlıkları (Custom Headers JSON)</label>
+                  <textarea
+                    rows={2}
+                    value={integrationFormConfig.customHeaders || ''}
+                    onChange={(e) =>
+                      setIntegrationFormConfig((prev) => ({ ...prev, customHeaders: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono text-[11px]"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer font-semibold pt-1">
+                  <input
+                    type="checkbox"
+                    checked={integrationFormConfig.debugLogging || false}
+                    onChange={(e) =>
+                      setIntegrationFormConfig((prev) => ({ ...prev, debugLogging: e.target.checked }))
+                    }
+                  />
+                  <span>Ayrıntılı Hata Günlüğü &amp; İstek Payload Kaydı (Debug Logging)</span>
+                </label>
+              </div>
+            )}
+
+            {/* TAB 3: İşletme & Donanım Özelleştirmeleri */}
+            {integrationActiveTab === 'custom' && (
+              <div className="space-y-4 text-xs">
+                {/* Ödeme & Sanal POS Ayarları */}
+                {(selectedIntegrationForConfig.category === 'Ödeme' ||
+                  selectedIntegrationForConfig.code.includes('pos')) && (
+                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
+                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4" />
+                      <span>Sanal POS &amp; Ödeme Güvenliği Ayarları</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Komisyon Oranı (%)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={integrationFormConfig.commissionRate ?? 1.89}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              commissionRate: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Para Birimi</label>
+                        <select
+                          value={integrationFormConfig.currency || 'TRY'}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              currency: e.target.value as any,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        >
+                          <option value="TRY">Türk Lirası (₺ - TRY)</option>
+                          <option value="USD">Amerikan Doları ($ - USD)</option>
+                          <option value="EUR">Euro (€ - EUR)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={integrationFormConfig.threeDSecure !== false}
+                        onChange={(e) =>
+                          setIntegrationFormConfig((prev) => ({ ...prev, threeDSecure: e.target.checked }))
+                        }
+                      />
+                      <span>3D Secure Güvenlik Doğrulaması Zorunlu</span>
+                    </label>
+
+                    {/* Yemek Kartları Anahtarları */}
+                    <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700 space-y-1.5">
+                      <div className="font-semibold text-neutral-600 dark:text-neutral-400">
+                        Desteklenen Yemek Kartı Ağları:
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={integrationFormConfig.multinetActive !== false}
+                            onChange={(e) =>
+                              setIntegrationFormConfig((prev) => ({
+                                ...prev,
+                                multinetActive: e.target.checked,
+                              }))
+                            }
+                          />
+                          <span>Multinet</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={integrationFormConfig.pluxeeActive !== false}
+                            onChange={(e) =>
+                              setIntegrationFormConfig((prev) => ({ ...prev, pluxeeActive: e.target.checked }))
+                            }
+                          />
+                          <span>Pluxee (Sodexo)</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={integrationFormConfig.edenredActive !== false}
+                            onChange={(e) =>
+                              setIntegrationFormConfig((prev) => ({ ...prev, edenredActive: e.target.checked }))
+                            }
+                          />
+                          <span>Edenred</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={integrationFormConfig.setcardActive !== false}
+                            onChange={(e) =>
+                              setIntegrationFormConfig((prev) => ({ ...prev, setcardActive: e.target.checked }))
+                            }
+                          />
+                          <span>Setcard</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Yazıcı & ESC/POS Ayarları */}
+                {selectedIntegrationForConfig.category === 'Yazıcı' && (
+                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
+                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                      <Printer className="w-4 h-4" />
+                      <span>Termal Fiş &amp; Mutfak İstasyonu Yazıcı Parametreleri</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Termal Kağıt Genişliği</label>
+                        <select
+                          value={integrationFormConfig.paperWidthMm || 80}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              paperWidthMm: Number(e.target.value) as 58 | 80,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-medium"
+                        >
+                          <option value={80}>80 mm Standart Restoran Termal Fiş</option>
+                          <option value={58}>58 mm Kompakt Kasa / Mobil Yazıcı</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Mutfak İstasyon Yönlendirme</label>
+                        <input
+                          type="text"
+                          value={integrationFormConfig.kitchenStationRouting || 'Ocakbaşı & Zırh Hattı'}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              kitchenStationRouting: e.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-4 pt-1">
+                      <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={integrationFormConfig.autoCutPaper !== false}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({ ...prev, autoCutPaper: e.target.checked }))
+                          }
+                        />
+                        <span>Otomatik Kağıt Kesme (Auto-cut)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={integrationFormConfig.autoPrintReceipt !== false}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              autoPrintReceipt: e.target.checked,
+                            }))
+                          }
+                        />
+                        <span>Sipariş Geldiğinde Otomatik Mutfak Fişi Bas</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* Yemek Platformları (Getir, Yemeksepeti, Trendyol GO, Migros) */}
+                {selectedIntegrationForConfig.category === 'Yemek Platformu' && (
+                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
+                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                      <Truck className="w-4 h-4" />
+                      <span>Pazaryeri &amp; Kurye Hazırlık Parametreleri</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Mutfak Hazırlık Süresi (Dakika)</label>
+                        <input
+                          type="number"
+                          min={5}
+                          max={60}
+                          value={integrationFormConfig.defaultPrepMinutes || 18}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              defaultPrepMinutes: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div className="flex items-end pb-1.5">
+                        <label className="flex items-center gap-2 cursor-pointer font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={integrationFormConfig.autoConfirmOrders !== false}
+                            onChange={(e) =>
+                              setIntegrationFormConfig((prev) => ({
+                                ...prev,
+                                autoConfirmOrders: e.target.checked,
+                              }))
+                            }
+                          />
+                          <span>Gelen Siparişleri Otomatik Onayla</span>
+                        </label>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={integrationFormConfig.stockSyncEnabled !== false}
+                        onChange={(e) =>
+                          setIntegrationFormConfig((prev) => ({
+                            ...prev,
+                            stockSyncEnabled: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Tükenen Ürünleri Platform Menüsünde Otomatik Durdur (Stok Eşitleme)</span>
+                    </label>
+                  </div>
+                )}
+
+                {/* E-belge & Muhasebe Ayarları */}
+                {(selectedIntegrationForConfig.category === 'E-belge' ||
+                  selectedIntegrationForConfig.category === 'Muhasebe') && (
+                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
+                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                      <Receipt className="w-4 h-4" />
+                      <span>GİB Yetkili Özel Entegratör &amp; e-Fatura Ayarları</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Yetkili Entegratör Firması</label>
+                        <select
+                          value={integrationFormConfig.integratorCompany || 'Uyumsoft / QNB e-Finans'}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              integratorCompany: e.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        >
+                          <option value="Uyumsoft / QNB e-Finans">Uyumsoft / QNB e-Finans GİB Portalı</option>
+                          <option value="Sovos / Foriba">Sovos / Foriba Entegratör</option>
+                          <option value="Paraşüt API">Paraşüt e-Arşiv API</option>
+                          <option value="Logo Yazılım">Logo Entegrasyon Servisi</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">e-Arşiv Fatura Seri Ön Eki</label>
+                        <input
+                          type="text"
+                          value={integrationFormConfig.eInvoicePrefix || 'ÖZT2026'}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              eInvoicePrefix: e.target.value,
+                            }))
+                          }
+                          placeholder="ÖZT2026"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={integrationFormConfig.autoIssueOnPayment !== false}
+                        onChange={(e) =>
+                          setIntegrationFormConfig((prev) => ({
+                            ...prev,
+                            autoIssueOnPayment: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Kasa veya QR Tahsilatı Tamamlandığında Otomatik e-Arşiv Fatura Oluştur</span>
+                    </label>
+                  </div>
+                )}
+
+                {/* SMS & WhatsApp Ayarları */}
+                {(selectedIntegrationForConfig.category === 'SMS' ||
+                  selectedIntegrationForConfig.category === 'WhatsApp Business') && (
+                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
+                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
+                      <BellRing className="w-4 h-4" />
+                      <span>Mesajlaşma &amp; Gönderici Başlığı</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Gönderici Başlığı (SMS Header)</label>
+                        <input
+                          type="text"
+                          value={integrationFormConfig.smsSenderHeader || 'OZTIKECIGER'}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              smsSenderHeader: e.target.value,
+                            }))
+                          }
+                          placeholder="OZTIKECIGER"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Varsayılan Şablon Dili</label>
+                        <select
+                          value={integrationFormConfig.templateLanguage || 'tr'}
+                          onChange={(e) =>
+                            setIntegrationFormConfig((prev) => ({
+                              ...prev,
+                              templateLanguage: e.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        >
+                          <option value="tr">Türkçe (Varsayılan)</option>
+                          <option value="en">İngilizce (English)</option>
+                          <option value="ar">Arapça (العربية)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 4: Canlı Test (Ping) */}
+            {integrationActiveTab === 'test' && (
+              <div className="space-y-4 text-xs">
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3 bg-neutral-50 dark:bg-[#141413]">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-neutral-900 dark:text-[#F5F2EB] flex items-center gap-1.5">
+                        <Activity className="w-4 h-4 text-[#B86B35]" />
+                        <span>Canlı Ağ ve API Bağlantı Testi (Ping)</span>
+                      </h4>
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        Tanımlanan API anahtarları ve endpoint adresi üzerinden gerçek zamanlı iletişim testi yapar.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleTestPingIntegration(selectedIntegrationForConfig)}
+                      disabled={integrationPingStatus.status === 'testing'}
+                      className="px-4 py-2 rounded-xl bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5 shadow-sm"
+                    >
+                      {integrationPingStatus.status === 'testing' ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Bağlantı Sınanıyor...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Radio className="w-3.5 h-3.5" />
+                          <span>Canlı Ping Gönder</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {integrationPingStatus.status === 'success' && (
+                    <div className="p-3 rounded-lg border border-emerald-500/50 bg-emerald-950/20 text-emerald-200 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Bağlantı Başarılı · HTTP 200 OK</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-emerald-300">
+                        {integrationPingStatus.message} · Gecikme Süresi: {integrationPingStatus.latencyMs} ms
+                      </div>
+                    </div>
+                  )}
+
+                  {integrationPingStatus.status === 'error' && (
+                    <div className="p-3 rounded-lg border border-rose-500/50 bg-rose-950/20 text-rose-200 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-rose-400" />
+                        <span>Bağlantı Hatası</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-rose-300">
+                        {integrationPingStatus.message || 'API servisine erişilemedi. Lütfen anahtar ve endpoint URL adresinizi kontrol edin.'}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-3 rounded-lg bg-white dark:bg-[#1A1815] border border-neutral-200 dark:border-neutral-800 space-y-1 font-mono text-[11px] text-neutral-500">
+                    <div>Protokol: {integrationFormConfig.posTerminalProtocol || 'REST / JSON-RPC'}</div>
+                    <div>Hedef: {integrationFormConfig.endpointUrl || `${integrationFormConfig.ipAddress}:${integrationFormConfig.port}`}</div>
+                    <div>Sözleşme Doğrulaması: {selectedIntegrationForConfig.contractVerified ? '✓ Onaylı ve İmzalı' : 'Beklemede'}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Footer */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-neutral-200 dark:border-neutral-800 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  handleOpenIntegrationConfig(selectedIntegrationForConfig);
+                  setStatusToast('Ayarlar fabrika varsayılanlarına sıfırlandı.');
+                }}
+                className="px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-white font-medium cursor-pointer"
+              >
+                Varsayılanlara Sıfırla
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedIntegrationForConfig(null)}
+                  className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveIntegrationConfig}
+                  className="px-5 py-2 rounded-xl bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold cursor-pointer shadow-sm"
+                >
+                  Değişiklikleri Kaydet
+                </button>
+              </div>
             </div>
           </div>
         </div>

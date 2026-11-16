@@ -319,6 +319,44 @@ export interface CMSPageItem {
   updatedAt: string;
 }
 
+export interface IntegrationAdvancedConfig {
+  apiKey?: string;
+  apiSecret?: string;
+  merchantId?: string;
+  terminalId?: string;
+  subMerchantKey?: string;
+  endpointUrl?: string;
+  ipAddress?: string;
+  port?: number;
+  timeoutMs?: number;
+  environment?: 'Sandbox' | 'Production';
+  threeDSecure?: boolean;
+  commissionRate?: number;
+  currency?: 'TRY' | 'USD' | 'EUR';
+  paperWidthMm?: 58 | 80;
+  autoCutPaper?: boolean;
+  autoPrintReceipt?: boolean;
+  kitchenStationRouting?: string;
+  autoConfirmOrders?: boolean;
+  defaultPrepMinutes?: number;
+  stockSyncEnabled?: boolean;
+  eInvoicePrefix?: string;
+  integratorCompany?: string;
+  autoIssueOnPayment?: boolean;
+  smsSenderHeader?: string;
+  templateLanguage?: string;
+  webhookUrl?: string;
+  webhookSecret?: string;
+  debugLogging?: boolean;
+  retryAttempts?: number;
+  customHeaders?: string;
+  multinetActive?: boolean;
+  pluxeeActive?: boolean;
+  edenredActive?: boolean;
+  setcardActive?: boolean;
+  posTerminalProtocol?: 'JSON-RPC' | 'REST' | 'TCP-Socket' | 'Serial-COM';
+}
+
 export interface IntegrationPluginItem {
   id: string;
   code: string;
@@ -351,6 +389,7 @@ export interface IntegrationPluginItem {
   contractVerified: boolean;
   description?: string;
   settings?: Record<string, string | number | boolean>;
+  advancedConfig?: IntegrationAdvancedConfig;
 }
 
 export interface AuditLogEntry {
