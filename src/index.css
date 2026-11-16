@@ -1,0 +1,110 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --brand-charcoal: #141413;
+    --brand-anthracite: #1F1F1D;
+    --brand-cream: #F8F6F0;
+    --brand-copper: #B86B35;
+    --brand-champagne: #D4AF6A;
+    --brand-lightgray: #E6E3DC;
+    --brand-white: #FFFFFF;
+
+    --font-display: 'Fraunces', Georgia, serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, .font-editorial {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  .tabular-nums, .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes oztikeNavFloat {
+  0%, 72%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  78% {
+    transform: translateY(-4px) scale(1.1);
+  }
+  84% {
+    transform: translateY(0) scale(0.98);
+  }
+  90% {
+    transform: translateY(-2px) scale(1.05);
+  }
+}
+
+@keyframes oztikeNavGlow {
+  0%, 70%, 100% {
+    box-shadow: 0 0 0 0 rgba(212, 163, 89, 0);
+  }
+  80% {
+    box-shadow: 0 0 14px 2px rgba(212, 163, 89, 0.35);
+  }
+}
+
+.nav-icon-pulse-1 {
+  animation: oztikeNavFloat 6.5s ease-in-out infinite 0.2s;
+}
+.nav-icon-pulse-2 {
+  animation: oztikeNavFloat 6.5s ease-in-out infinite 1.4s;
+}
+.nav-icon-pulse-3 {
+  animation: oztikeNavFloat 6.5s ease-in-out infinite 2.6s, oztikeNavGlow 6.5s ease-in-out infinite 2.6s;
+}
+.nav-icon-pulse-4 {
+  animation: oztikeNavFloat 6.5s ease-in-out infinite 3.8s;
+}
+.nav-icon-pulse-5 {
+  animation: oztikeNavFloat 6.5s ease-in-out infinite 5.0s, oztikeNavGlow 6.5s ease-in-out infinite 5.0s;
+}
+
+#oztike-thermal-print-sheet {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 4mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body > *:not(#oztike-thermal-print-sheet) {
+    display: none !important;
+  }
+
+  #oztike-thermal-print-sheet {
+    display: block !important;
+    width: 100%;
+    max-width: 80mm;
+    margin: 0 auto !important;
+    padding: 8px 10px !important;
+    background: #ffffff !important;
+    color: #111111 !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+  }
+}
+
+

@@ -1,0 +1,1593 @@
+
+# ÖZTİKE CİĞER
+## RESTAURANT OS – TAM KAPSAMLI PROJE VE GELİŞTİRME ŞARTNAMESİ
+
+**Proje:** ÖzTike Ciğer Restaurant OS  
+**Sürüm:** 1.0 – Geliştirme ana şartnamesi  
+**Dil:** Türkçe  
+**Platform:** Web tabanlı yönetim ve restoran otomasyon sistemi  
+**Sunucu:** cPanel uyumlu PHP Hosting  
+**Backend:** PHP 8.2+  
+**Veritabanı:** MySQL 8 / MariaDB  
+**Arayüz:** HTML5, CSS3, JavaScript  
+**Mimari:** Modüler, genişletilebilir, çok şubeye hazır  
+**PWA:** Destekli  
+**İlk kurulum:** Tek şube  
+
+---
+
+# 1. PROJENİN AMACI
+
+ÖzTike Ciğer Restaurant OS, restoranın tüm operasyonlarını tek merkezden yönetmek için geliştirilecek kapsamlı bir restoran otomasyon sistemidir.
+
+Sistem aşağıdaki işlemleri bir arada yönetmelidir:
+
+- Restoran yönetimi
+- QR menü
+- Online sipariş
+- Masa ve garson yönetimi
+- Mutfak sipariş ekranı
+- Kasa ve POS
+- Paket servis
+- Gel-al siparişleri
+- Rezervasyon
+- Ürün ve kategori yönetimi
+- Stok ve reçete yönetimi
+- Maliyet ve kârlılık
+- Müşteri yönetimi
+- Sadakat ve kampanyalar
+- Personel ve yetkilendirme
+- Muhasebe ve finansal raporlar
+- Web sitesi ve içerik yönetimi
+- SEO
+- Bildirimler
+- Entegrasyonlar
+- Güvenlik ve yedekleme
+- Yapay zekâ destekli analizler
+
+Sistem gerçek restoran operasyonlarında kullanılabilecek şekilde geliştirilmelidir.
+
+Çalışmayan buton, sahte işlem, göstermelik form veya yalnızca tasarım amaçlı modül bulunmamalıdır.
+
+---
+
+# 2. KURUMSAL KİMLİK VE TASARIM
+
+## 2.1 Marka tasarımı
+
+ÖzTike Ciğer için özgün bir kurumsal kimlik oluşturulacaktır.
+
+Gerekli tasarım çıktıları:
+
+- Ana logo
+- Yatay logo
+- Dikey logo
+- Sembol logo
+- Favicon
+- Açık zemin logo
+- Koyu zemin logo
+- PWA uygulama ikonları
+- Yönetim paneli logo varyasyonları
+
+Logo farklı ekran boyutlarında okunabilir olmalıdır.
+
+## 2.2 Renk paleti
+
+Ana renkler:
+
+- Kömür siyahı
+- Antrasit
+- Krem
+- Bakır
+- Şampanya altını
+- Açık gri
+- Beyaz
+
+Tasarım yaklaşımı:
+
+- Premium
+- Modern
+- Kurumsal
+- Sade
+- Editoryal
+- Kullanışlı
+- Gözü yormayan
+
+Neon renkler ve aşırı parlak efektler kullanılmamalıdır.
+
+## 2.3 Responsive tasarım
+
+Tüm ekranlar şu cihazlara uyumlu olmalıdır:
+
+- Masaüstü
+- Dizüstü bilgisayar
+- Tablet
+- Android telefon
+- iPhone
+
+Mobil ekranlarda dokunma alanları yeterince büyük olmalıdır.
+
+## 2.4 Tema sistemi
+
+- Açık tema
+- Koyu tema
+- Sistem temasını kullanma
+- Kullanıcı tercihini hatırlama
+- Tema renklerini yönetim panelinden değiştirme
+
+## 2.5 Yönetim paneli yerleşimi
+
+- Açılır kapanır sol menü
+- Üst yönetim çubuğu
+- Global arama
+- Bildirim merkezi
+- Profil menüsü
+- Hızlı işlem alanı
+- Dashboard kartları
+- Filtreleme ve sıralama
+- Mobil menü
+- Erişilebilirlik seçenekleri
+
+---
+
+# 3. YÖNETİM PANELİ
+
+Yönetim paneli tüm sistemin merkezi olacaktır.
+
+## 3.1 Dashboard
+
+Ana ekranda gösterilecek bilgiler:
+
+- Günlük ciro
+- Haftalık ciro
+- Aylık ciro
+- Sipariş sayısı
+- Ortalama sipariş tutarı
+- Açık masalar
+- Hazırlanan siparişler
+- Bekleyen siparişler
+- Paket servis siparişleri
+- Rezervasyonlar
+- Günlük giderler
+- Tahmini kâr
+- Kritik stok uyarıları
+- Personel durumu
+- Ödeme durumu
+- Son işlemler
+
+## 3.2 Yönetim menüsü
+
+1. Genel Bakış
+2. Siparişler
+3. Masalar
+4. QR Menü
+5. Ürünler
+6. Kategoriler
+7. Mutfak
+8. Garsonlar
+9. Paket Servis
+10. Gel-Al
+11. Rezervasyonlar
+12. POS / Kasa
+13. Ödemeler
+14. Stok Yönetimi
+15. Reçeteler
+16. Tedarikçiler
+17. Müşteriler
+18. Sadakat Programı
+19. Kampanyalar
+20. Personel
+21. Vardiyalar
+22. Gelirler
+23. Giderler
+24. Finansal Raporlar
+25. İstatistikler
+26. Web Sitesi
+27. İçerik Yönetimi
+28. SEO Yönetimi
+29. Medya Kütüphanesi
+30. Bildirimler
+31. Eklenti Merkezi
+32. Entegrasyonlar
+33. Şube Yönetimi
+34. Görünüm Ayarları
+35. Genel Ayarlar
+36. Güvenlik
+37. Yedekleme
+38. İşlem Kayıtları
+
+Her modül kendi yetkilendirme ve işlem kontrolüne sahip olmalıdır.
+
+---
+
+# 4. ÜRÜN VE KATEGORİ YÖNETİMİ
+
+## 4.1 Başlangıç kategorileri
+
+Sistem ilk kurulumda aşağıdaki kategori taslaklarını oluşturmalıdır:
+
+1. Ciğer Kebapları
+2. Kebap Çeşitleri
+3. Karışık Izgaralar
+4. Dürüm Çeşitleri
+5. Porsiyonlar
+6. Kahvaltılıklar
+7. Başlangıçlar
+8. Mezeler
+9. Salatalar
+10. Sıcak Atıştırmalıklar
+11. Ekmek
+12. İçecekler
+13. Tatlılar
+14. Çocuk Menüsü
+15. Özel Menüler
+
+Bunlar örnek kategori taslaklarıdır. İşletme sahibi tarafından düzenlenebilir.
+
+## 4.2 Ürün özellikleri
+
+Her ürün için:
+
+- Ürün adı
+- Ürün kodu
+- Kategori
+- Açıklama
+- Ürün görseli
+- Fiyat
+- İndirimli fiyat
+- Porsiyon bilgisi
+- Gramaj
+- İçindekiler
+- Alerjenler
+- Kalori
+- Hazırlanma süresi
+- Acılık seviyesi
+- Etiketler
+- Öne çıkarma
+- Stok durumu
+- Aktif / pasif
+- Mutfak istasyonu
+- Sipariş kanalları
+- SEO başlığı
+- SEO açıklaması
+- URL bağlantısı
+
+Kalori ve içerik bilgileri doğrulanmadan gerçek bilgi olarak yayınlanmamalıdır.
+
+## 4.3 Ürün seçenekleri
+
+- Porsiyon seçimi
+- Acı seviyesi
+- Ekmek tercihi
+- Ekstra soğan
+- Ekstra maydanoz
+- Ekstra biber
+- Ekstra ciğer
+- Özel müşteri notu
+
+Seçeneklerin fiyatları yönetim panelinden belirlenmelidir.
+
+## 4.4 Menü paketleri
+
+- Tek kişilik menü
+- İki kişilik menü
+- Aile menüsü
+- Karışık menü
+- Özel menüler
+
+Paket içeriği ve fiyatları işletme tarafından tanımlanmalıdır.
+
+## 4.5 Ürün yönetim özellikleri
+
+- Toplu ürün düzenleme
+- Ürün kopyalama
+- Sıralama
+- Kategori taşıma
+- Toplu fiyat güncelleme
+- Ürün varyasyonları
+- Görsel galerisi
+- Ürün geçmişi
+- Stok bağlantısı
+
+---
+
+# 5. QR MENÜ VE MÜŞTERİ SİSTEMİ
+
+Her masa için ayrı ve güvenli QR kod oluşturulmalıdır.
+
+Müşteri uygulama indirmeden telefon tarayıcısından menüye ulaşabilmelidir.
+
+## Müşteri ekranları
+
+- Açılış sayfası
+- Kategori listesi
+- Ürün listesi
+- Ürün detayları
+- Ürün seçenekleri
+- Sepet
+- Sipariş özeti
+- Sipariş onayı
+- Masa siparişi
+- Garson çağırma
+- Hesap isteme
+- Sipariş takibi
+- Müşteri hesabı
+- Sipariş geçmişi
+
+## QR güvenliği
+
+- Her masa için benzersiz QR token
+- Tahmin edilemeyen token üretimi
+- QR token yenileme
+- İptal edilen QR kodları
+- Masa eşleştirme kontrolü
+- İstek sınırlaması
+- Sipariş tekrarını önleme
+
+QR kodu tek başına ödeme onayı veya yetkisiz yönetim erişimi sağlamamalıdır.
+
+---
+
+# 6. SİPARİŞ YÖNETİMİ
+
+## Sipariş kanalları
+
+- QR
+- Garson
+- Kasa
+- Gel-Al
+- Telefon
+- Web sitesi
+- Paket servis
+- Rezervasyon bağlantılı sipariş
+
+## Sipariş durumları
+
+1. Yeni
+2. Onay bekliyor
+3. Mutfağa gönderildi
+4. Hazırlanıyor
+5. Hazır
+6. Servis bekliyor
+7. Servis edildi
+8. Kuryeye teslim edildi
+9. Tamamlandı
+10. İptal edildi
+11. İade edildi
+
+Her durum geçişi yetki kontrolü ve işlem kaydıyla yapılmalıdır.
+
+## Sipariş özellikleri
+
+- Sipariş numarası
+- Sipariş kaynağı
+- Masa
+- Müşteri
+- Personel
+- Ürünler
+- Ürün seçenekleri
+- İndirimler
+- Vergiler
+- Ödeme durumu
+- Hazırlanma süresi
+- Sipariş notları
+- İşlem geçmişi
+
+Sipariş iptali ve para iadesi birbirinden ayrı işlemler olmalıdır.
+
+---
+
+# 7. POS VE KASA SİSTEMİ
+
+## POS özellikleri
+
+- Hızlı satış
+- Barkod desteği
+- Ürün arama
+- Kategori filtreleme
+- Masa seçimi
+- Masa birleştirme
+- Masa bölme
+- Masa taşıma
+- Ürün bazlı hesap bölme
+- Kişi bazlı hesap bölme
+- İndirim
+- İkram
+- Açık hesap
+- Çoklu ödeme
+- Nakit ödeme
+- Kart ödeme
+- Banka havalesi
+- Gün sonu
+- Kasa açılış ve kapanış
+- Kasa farkı
+- İşlem geçmişi
+- Fiş yazdırma
+
+İndirim, ikram, iptal ve kasa düzeltme işlemleri yetkilendirilmelidir.
+
+Yasal mali fiş ve e-belge işlemleri ilgili resmi sistem ve yetkili sağlayıcı entegrasyonlarıyla yapılmalıdır.
+
+---
+
+# 8. MUTFAK EKRANI – KDS
+
+Mutfak ekranı siparişleri gerçek zamanlı göstermelidir.
+
+## Mutfak istasyonları
+
+- Izgara
+- Tavuk
+- Soğuk mutfak
+- Tatlı
+- İçecek
+- Paketleme
+
+## Özellikler
+
+- Yeni sipariş bildirimi
+- Sipariş sıralama
+- Hazırlanma sayacı
+- Geciken sipariş uyarısı
+- Sipariş detayları
+- Ürün bazlı hazırlık
+- Hazır işaretleme
+- Garsona bildirim
+- Yazıcı yönlendirme
+- İstasyon bazlı sipariş filtreleme
+
+Mutfak ekranı tablet ve masaüstünde kullanılabilmelidir.
+
+---
+
+# 9. GARSON VE MASA YÖNETİMİ
+
+## Masa özellikleri
+
+- Kat planı
+- Bölüm yönetimi
+- Masa numarası
+- Kapasite
+- QR bağlantısı
+- Masa durumu
+- Masa sorumlusu
+- Sipariş geçmişi
+- Açık hesap
+- Hesap isteme bildirimi
+
+## Masa durumları
+
+- Boş
+- Dolu
+- Sipariş bekliyor
+- Hazırlanıyor
+- Hesap bekliyor
+- Rezerve
+- Temizlik bekliyor
+
+## Garson paneli
+
+- Yetkili masalar
+- Sipariş oluşturma
+- Ürün ekleme
+- Sipariş notu
+- Sipariş durumu
+- Hesap isteme
+- Masa taşıma talebi
+- Müşteri çağrısı
+- Günlük performans
+
+Garsonlar yalnızca yetkili oldukları işlemleri yapabilmelidir.
+
+---
+
+# 10. PAKET SERVİS VE GEL-AL
+
+## Paket servis
+
+- Müşteri adres defteri
+- Telefon
+- Harita bağlantısı
+- Teslimat bölgeleri
+- Bölge bazlı ücret
+- Minimum sipariş
+- Tahmini teslimat
+- Kurye atama
+- Kurye durumu
+- Teslimat takibi
+- Başarısız teslimat kaydı
+
+## Gel-Al
+
+- Müşteri siparişi
+- Teslim alma saati
+- Hazırlık durumu
+- Ödeme durumu
+- Teslim edildi kaydı
+
+Ödeme ve teslimat durumu birbirinden bağımsız izlenmelidir.
+
+---
+
+# 11. REZERVASYON YÖNETİMİ
+
+- Online rezervasyon
+- Telefon rezervasyonu
+- Müşteri bilgileri
+- Kişi sayısı
+- Tarih
+- Saat
+- Masa
+- Özel istek
+- Notlar
+- Onay
+- İptal
+- Değişiklik
+- Gelmedi kaydı
+- Kapora takibi
+- SMS bildirimi
+- WhatsApp bildirimi
+
+Rezervasyon çakışmaları kontrol edilmelidir.
+
+---
+
+# 12. STOK VE ENVANTER
+
+## Stok kategorileri
+
+- Et ve sakatat
+- Sebze
+- Meyve
+- Süt ürünleri
+- Kuru gıda
+- Baharat
+- İçecek
+- Ambalaj
+- Temizlik malzemeleri
+- Diğer sarf malzemeleri
+
+## Stok işlemleri
+
+- Stok girişi
+- Stok çıkışı
+- Depolar arası transfer
+- Sayım
+- Fire
+- Zayi
+- Son kullanma tarihi
+- Parti / lot takibi
+- Tedarikçi
+- Alış faturası kaydı
+- Kritik stok uyarısı
+
+## Reçete sistemi
+
+Her ürün için malzeme reçetesi tanımlanabilmelidir.
+
+Örnek:
+
+Bir ürün satıldığında reçetede tanımlı malzemeler stoktan otomatik düşülmelidir.
+
+Bu işlem:
+
+- Sipariş onayı
+- Hazırlık
+- İptal
+- İade
+
+kurallarına göre kontrollü yürütülmelidir.
+
+Stok hareketleri silinmemeli; düzeltmeler ters kayıt veya yeni hareketle yapılmalıdır.
+
+---
+
+# 13. MALİYET VE KÂRLILIK
+
+- Ürün maliyeti
+- Malzeme maliyeti
+- Reçete maliyeti
+- Fire maliyeti
+- Satış fiyatı
+- Brüt kâr
+- Kâr marjı
+- Kategori kârlılığı
+- Günlük kârlılık
+- Haftalık kârlılık
+- Aylık kârlılık
+
+Maliyet hesabında kullanılan stok alış fiyatı ve reçete sürümü saklanmalıdır.
+
+---
+
+# 14. ÖDEME SİSTEMLERİ
+
+Desteklenmesi planlanan ödeme yöntemleri:
+
+- Nakit
+- Fiziksel POS
+- Banka havalesi
+- Kapıda ödeme
+- iyzico
+- PayTR
+- Banka sanal POS
+- Yemek kartları
+
+Her ödeme sağlayıcısı bağımsız entegrasyon modülü olmalıdır.
+
+## Ödeme güvenliği
+
+- Test / canlı mod
+- API anahtarları
+- Webhook doğrulaması
+- İmza kontrolü
+- İşlem zaman aşımı
+- Tekrarlanan istek koruması
+- İade işlemleri
+- Mutabakat
+- Ödeme kayıtları
+
+Ham kart bilgileri sistemde saklanmamalıdır.
+
+Ödeme yalnızca doğrulanmış sağlayıcı yanıtı veya doğrulanmış webhook ile başarılı sayılmalıdır.
+
+Sağlayıcı sözleşmesi ve canlı API erişimi olmadan entegrasyon tamamlanmış kabul edilmemelidir.
+
+---
+
+# 15. MÜŞTERİ VE SADAKAT SİSTEMİ
+
+## CRM
+
+- Müşteri kaydı
+- İsim
+- Telefon
+- E-posta
+- Adresler
+- Sipariş geçmişi
+- Tercihler
+- Geri bildirim
+- Müşteri grubu
+- Doğum günü
+- Referans sistemi
+
+## Sadakat
+
+- Puan kazanma
+- Puan harcama
+- Kupon
+- Ödül
+- Davet sistemi
+- Kampanya geçmişi
+- Müşteri bakiyesi
+
+Puan ve bakiye hareketleri kayıt altında tutulmalıdır.
+
+KVKK ve ticari elektronik ileti izinleri ayrı tutulmalı; pazarlama izni varsayılan olarak verilmemelidir.
+
+---
+
+# 16. KAMPANYA YÖNETİMİ
+
+Desteklenecek kampanyalar:
+
+- Yüzde indirim
+- Sabit tutar indirimi
+- Bir alana bir bedava
+- Menü paketi
+- Ürün kampanyası
+- Kategori kampanyası
+- Saat bazlı kampanya
+- Gün bazlı kampanya
+- Müşteri grubu kampanyası
+- Kupon kodu
+- İlk sipariş kampanyası
+- Sadakat kampanyası
+
+Kampanyalarda başlangıç ve bitiş tarihi, kullanım limiti, uygunluk koşulu ve birleştirme kuralları bulunmalıdır.
+
+---
+
+# 17. WEB SİTESİ VE SEO
+
+## Hazır sayfa taslakları
+
+- Ana Sayfa
+- Hakkımızda
+- Menü
+- Kategoriler
+- Kampanyalar
+- Galeri
+- Blog
+- İletişim
+- Rezervasyon
+- Sipariş Takibi
+- Sıkça Sorulan Sorular
+- Gizlilik Politikası
+- KVKK
+- Çerez Politikası
+- Mesafeli Satış
+- Kullanım Koşulları
+
+Yasal metinler işletmeye ve yürürlükteki mevzuata göre uzman incelemesinden geçirilmelidir.
+
+## SEO özellikleri
+
+Her sayfada:
+
+- SEO başlığı
+- Meta açıklaması
+- URL slug
+- Anahtar kelime önerileri
+- Canonical
+- Robots
+- Open Graph
+- Sosyal paylaşım görseli
+- Görsel alt metni
+- Schema.org
+- İç bağlantılar
+
+## Teknik SEO
+
+- XML sitemap
+- Robots.txt
+- Breadcrumb
+- 404 sayfası
+- 301 yönlendirme
+- Mobil uyumluluk
+- Sayfa hızı
+- Görsel optimizasyonu
+
+## Harici servisler
+
+- Google Analytics 4
+- Google Tag Manager
+- Google Search Console
+- Google Maps
+- Google Business Profile bağlantıları
+
+SEO özellikleri sıralama garantisi olarak sunulmamalıdır.
+
+---
+
+# 18. CMS – İÇERİK YÖNETİMİ
+
+- Sayfa yönetimi
+- Blog yönetimi
+- Kategori yönetimi
+- Etiketler
+- Galeri
+- Video
+- Slider
+- Banner
+- Duyuru
+- SSS
+- Referanslar
+- Sosyal medya
+- İletişim alanları
+- Header
+- Footer
+- Menü oluşturucu
+- Taslak içerik
+- Zamanlanmış yayın
+
+Medya kütüphanesinde dosya türü, boyutu ve güvenlik kontrolleri bulunmalıdır.
+
+---
+
+# 19. EKLENTİ VE ENTEGRASYON MERKEZİ
+
+Planlanan entegrasyon kategorileri:
+
+- Ödeme
+- WhatsApp Business
+- SMS
+- SMTP e-posta
+- Harita
+- Analitik
+- Yazıcı
+- Barkod
+- Kurye
+- Muhasebe
+- E-belge
+- Pazarlama
+- Güvenlik
+- Otomasyon
+- Webhook
+- Yapay zekâ
+
+Her eklentide:
+
+- Sürüm
+- Yetki kapsamı
+- Kurulum
+- Kaldırma
+- Güncelleme
+- Geri alma
+- Bağlantı testi
+- İşlem kayıtları
+
+bulunmalıdır.
+
+Rastgele PHP dosyası yükleyerek eklenti çalıştırma özelliği kullanılmamalıdır.
+
+---
+
+# 20. PERSONEL VE YETKİLENDİRME
+
+## Roller
+
+- Süper Yönetici
+- İşletme Müdürü
+- Şube Müdürü
+- Kasiyer
+- Garson
+- Mutfak
+- Kurye
+- Depo Sorumlusu
+- Muhasebe
+- İçerik Editörü
+
+## Personel özellikleri
+
+- Personel kaydı
+- Davet
+- Şifre yenileme
+- Rol atama
+- Ayrıntılı yetki
+- İki aşamalı doğrulama
+- Oturum yönetimi
+- Cihaz yönetimi
+- Vardiya
+- Performans
+- İşlem geçmişi
+
+Her kritik işlem kullanıcı ve zaman bilgisiyle kaydedilmelidir.
+
+---
+
+# 21. GENEL AYARLAR
+
+## İşletme bilgileri
+
+- İşletme adı
+- Logo
+- Vergi bilgileri
+- Telefon
+- E-posta
+- Adres
+- Harita
+- Çalışma saatleri
+- Para birimi
+- Vergi ayarları
+- Saat dilimi
+- Sosyal medya
+
+## Sipariş ayarları
+
+- Sipariş kanalları
+- Minimum sipariş
+- Hazırlık süresi
+- Teslimat ayarları
+- Masa ayarları
+- QR ayarları
+- Sipariş numarası
+
+## Entegrasyon ayarları
+
+- SMTP
+- SMS
+- WhatsApp
+- Ödeme
+- Harita
+- Analitik
+- Yazıcı
+
+Gizli anahtarlar şifreli veya güvenli sunucu yapılandırmasında tutulmalıdır.
+
+---
+
+# 22. BİLDİRİMLER VE OTOMASYON
+
+Bildirim tetikleyicileri:
+
+- Yeni sipariş
+- Geciken sipariş
+- Garson çağrısı
+- Hesap talebi
+- Kritik stok
+- Yeni rezervasyon
+- Ödeme başarısızlığı
+- Gün sonu
+- Kasa farkı
+- Yedekleme başarısızlığı
+- Entegrasyon hatası
+
+Bildirim kanalları:
+
+- Yönetim paneli
+- Tarayıcı bildirimi
+- E-posta
+- SMS
+- WhatsApp
+- PWA bildirimi
+
+Bildirimler role ve şubeye göre filtrelenmelidir.
+
+---
+
+# 23. ÇOK ŞUBELİ YAPI
+
+İlk kurulum tek şube olacaktır.
+
+Mimari gelecekte çok şubeyi desteklemelidir.
+
+Her şubede ayrı yönetilebilecek bilgiler:
+
+- Menü
+- Ürün fiyatları
+- Stok
+- Personel
+- Masalar
+- Kasa
+- Siparişler
+- Raporlar
+- Depolar
+- Tedarikçiler
+
+Şubeler arası stok transferi desteklenmelidir.
+
+---
+
+# 24. YAPAY ZEKÂ MODÜLÜ
+
+İsteğe bağlı yapay zekâ özellikleri:
+
+- Satış analizi
+- En çok satılan ürünler
+- Az satan ürünler
+- Stok tahmini
+- Maliyet analizi
+- Kampanya önerileri
+- SEO önerileri
+- Blog taslakları
+- Günlük yönetici özeti
+
+Yapay zekâ:
+
+- Ödemeleri değiştiremez.
+- Siparişleri kendiliğinden iptal edemez.
+- Fiyatları onaysız değiştiremez.
+- Stok kayıtlarını onaysız değiştiremez.
+- Finansal işlem gerçekleştiremez.
+
+Öneriler kullanıcı onayına sunulmalıdır.
+
+---
+
+# 25. GÜVENLİK
+
+Zorunlu güvenlik önlemleri:
+
+- PDO prepared statements
+- SQL injection koruması
+- XSS koruması
+- CSRF token
+- Güvenli oturum
+- Güvenli parola hash
+- Oturum yenileme
+- Rate limiting
+- İki aşamalı doğrulama
+- Rol ve yetki kontrolü
+- Güvenli dosya yükleme
+- MIME kontrolü
+- Webhook doğrulaması
+- API erişim kontrolü
+- İşlem kayıtları
+- Hata kayıtları
+- Yedekleme
+- Geri yükleme
+
+Gizli yapılandırma dosyaları web üzerinden erişilememelidir.
+
+Hata ayıklama bilgileri canlı ortamda ziyaretçiye gösterilmemelidir.
+
+---
+
+# 26. YEDEKLEME VE GERİ YÜKLEME
+
+- Veritabanı yedekleme
+- Dosya yedekleme
+- Otomatik yedekleme
+- Manuel yedekleme
+- Yedek geçmişi
+- Yedek indirme
+- Harici depolama
+- Geri yükleme
+- Yedek doğrulama
+- Yedekleme kayıtları
+
+Geri yükleme öncesinde mevcut verilerin korunması için ek güvenlik adımı uygulanmalıdır.
+
+---
+
+# 27. PWA VE MOBİL KULLANIM
+
+- Uygulama olarak yükleme
+- Manifest
+- Uygulama ikonları
+- Açılış ekranı
+- Tam ekran
+- Servis çalışanı
+- Bağlantı durumu
+- Güvenli önbellek
+- Güvenli çevrimdışı görüntüleme
+- Push bildirimleri
+
+Çevrimdışı durumda ödeme başarılı gibi gösterilmemelidir.
+
+Tekrar gönderilen siparişlerin mükerrer oluşması engellenmelidir.
+
+---
+
+# 28. TEKNİK MİMARİ VE DOSYA YAPISI
+
+Önerilen proje dizini:
+
+    oztike-restaurant-os/
+    |
+    |-- admin/
+    |   |-- dashboard/
+    |   |-- orders/
+    |   |-- products/
+    |   |-- categories/
+    |   |-- tables/
+    |   |-- kitchen/
+    |   |-- staff/
+    |   |-- customers/
+    |   |-- inventory/
+    |   |-- finance/
+    |   |-- reports/
+    |   |-- settings/
+    |   |-- integrations/
+    |
+    |-- app/
+    |   |-- Controllers/
+    |   |-- Models/
+    |   |-- Services/
+    |   |-- Middleware/
+    |   |-- Helpers/
+    |   |-- Events/
+    |   |-- Exceptions/
+    |   |-- Validators/
+    |   |-- Repositories/
+    |
+    |-- modules/
+    |   |-- payments/
+    |   |-- notifications/
+    |   |-- printers/
+    |   |-- accounting/
+    |   |-- marketing/
+    |   |-- analytics/
+    |   |-- ai/
+    |
+    |-- database/
+    |   |-- migrations/
+    |   |-- seeds/
+    |   |-- schema.sql
+    |
+    |-- public/
+    |   |-- assets/
+    |   |-- uploads/
+    |   |-- manifest.webmanifest
+    |   |-- service-worker.js
+    |
+    |-- customer/
+    |   |-- qr-menu/
+    |   |-- cart/
+    |   |-- checkout/
+    |   |-- tracking/
+    |
+    |-- waiter/
+    |-- kitchen/
+    |-- cashier/
+    |-- courier/
+    |
+    |-- storage/
+    |   |-- logs/
+    |   |-- backups/
+    |   |-- cache/
+    |
+    |-- tests/
+    |-- config/
+    |-- install/
+    |-- upgrade/
+    |-- docs/
+    |
+    |-- .htaccess
+    |-- index.php
+    |-- login.php
+    |-- logout.php
+    |-- README.md
+    |-- VERSION
+
+## Teknik kurallar
+
+- PHP 8.2 veya üzeri
+- MySQL 8 veya uyumlu MariaDB
+- PDO
+- HTML5
+- CSS3
+- JavaScript
+- REST API
+- Modüler servis mimarisi
+- Veritabanı migration sistemi
+- Seed sistemi
+- Merkezi hata yönetimi
+- Merkezi log sistemi
+- Yetkilendirme middleware
+- Güvenli yapılandırma
+
+Uygulama cPanel paylaşımlı hosting üzerinde çalışabilecek şekilde tasarlanmalıdır.
+
+Sunucuda bulunmayan servisler zorunlu tutulmamalıdır.
+
+---
+
+# 29. VERİTABANI TASARIMI
+
+Temel tablolar:
+
+## Kullanıcı ve güvenlik
+
+- users
+- roles
+- permissions
+- role_permissions
+- user_roles
+- user_sessions
+- login_attempts
+- password_resets
+- audit_logs
+
+## Şube ve işletme
+
+- businesses
+- branches
+- branch_settings
+- business_settings
+
+## Ürün ve menü
+
+- categories
+- products
+- product_images
+- product_variants
+- product_options
+- product_option_values
+- product_tags
+- product_channels
+- menu_packages
+
+## Masa ve QR
+
+- dining_areas
+- dining_tables
+- table_qr_tokens
+- table_assignments
+
+## Sipariş
+
+- orders
+- order_items
+- order_item_options
+- order_status_history
+- order_notes
+- order_cancellations
+- order_refunds
+
+## Mutfak
+
+- kitchen_stations
+- kitchen_tickets
+- kitchen_ticket_items
+- kitchen_events
+
+## Ödeme ve kasa
+
+- payments
+- payment_transactions
+- payment_refunds
+- payment_providers
+- cash_registers
+- cash_sessions
+- cash_movements
+- daily_closings
+
+## Stok ve reçete
+
+- ingredients
+- ingredient_categories
+- stock_locations
+- stock_movements
+- stock_counts
+- stock_count_items
+- suppliers
+- purchases
+- purchase_items
+- recipes
+- recipe_items
+- recipe_versions
+- waste_records
+
+## Müşteri
+
+- customers
+- customer_addresses
+- customer_preferences
+- customer_consents
+- customer_points
+- loyalty_transactions
+- customer_feedback
+
+## Rezervasyon
+
+- reservations
+- reservation_tables
+- reservation_history
+
+## Paket servis
+
+- delivery_zones
+- delivery_fees
+- couriers
+- delivery_assignments
+- delivery_tracking
+
+## Personel
+
+- staff_profiles
+- staff_shifts
+- staff_attendance
+- staff_performance
+
+## Kampanya
+
+- campaigns
+- coupons
+- coupon_redemptions
+- campaign_products
+- campaign_categories
+
+## İçerik ve SEO
+
+- pages
+- posts
+- post_categories
+- tags
+- media
+- sliders
+- banners
+- faqs
+- seo_metadata
+- redirects
+
+## Entegrasyon ve bildirim
+
+- integrations
+- integration_logs
+- webhooks
+- notification_templates
+- notifications
+- notification_preferences
+
+## Sistem
+
+- settings
+- migrations
+- backups
+- system_logs
+- scheduled_tasks
+
+Tablolarda uygun:
+
+- Primary key
+- Foreign key
+- Index
+- Unique constraint
+- Created_at
+- Updated_at
+
+alanları kullanılmalıdır.
+
+Para değerleri kayan noktalı sayı yerine uygun DECIMAL türünde tutulmalıdır.
+
+Tarih ve saatler işletmenin saat dilimi dikkate alınarak saklanmalıdır.
+
+Veritabanı migration işlemleri tekrar çalıştırıldığında veri kaybına neden olmamalıdır.
+
+---
+
+# 30. İLK KURULUM VE ÖRNEK VERİLER
+
+Kurulum sihirbazı:
+
+1. Sunucu gereksinimlerini kontrol eder.
+2. PHP sürümünü kontrol eder.
+3. Gerekli PHP eklentilerini kontrol eder.
+4. Dosya izinlerini kontrol eder.
+5. Veritabanı bağlantısını test eder.
+6. Veritabanını oluşturur.
+7. Migration işlemlerini yürütür.
+8. Seed verilerini ekler.
+9. Yönetici hesabını oluşturur.
+10. İlk işletme bilgilerini alır.
+11. Kurulumu tamamlar.
+12. Kurulum dosyalarını kilitler.
+
+## Seed verileri
+
+- Örnek kategoriler
+- Örnek ürün taslakları
+- Ürün seçenekleri
+- Menü paketleri
+- Mutfak istasyonları
+- Personel rolleri
+- Örnek masa planı
+- SEO sayfa taslakları
+- Blog taslakları
+- SSS taslakları
+- E-posta şablonları
+- Entegrasyon iskeletleri
+
+Örnek ürünler ve fiyatlar gerçek işletme bilgisi gibi yayınlanmamalıdır.
+
+Tüm demo verileri açıkça DEMO olarak işaretlenmelidir.
+
+---
+
+# 31. GELİŞMİŞ AYARLAR MERKEZİ
+
+Ayarlar merkezi aşağıdaki özellikleri desteklemelidir:
+
+- Ayar arama
+- Kategori bazlı ayarlar
+- Modül bazlı ayarlar
+- Şube bazlı ayarlar
+- Ayar geçmişi
+- Varsayılana döndürme
+- Dışa aktarma
+- İçe aktarma
+- Yetki kontrolü
+- Form doğrulama
+- Bağlantı testi
+- Değişiklik geçmişi
+
+Kritik ayarlar için onay mekanizması bulunmalıdır.
+
+---
+
+# 32. TEST VE KABUL KRİTERLERİ
+
+Yazılım tamamlandı olarak işaretlenmeden önce aşağıdaki testler yapılmalıdır:
+
+## Kurulum
+
+- Temiz cPanel kurulum testi
+- Veritabanı oluşturma
+- Migration testi
+- Seed testi
+- Yönetici hesabı testi
+
+## Yönetim paneli
+
+- Giriş ve çıkış
+- Yetki kontrolü
+- CRUD işlemleri
+- Form doğrulama
+- Mobil ekran testi
+
+## Sipariş
+
+- QR sipariş testi
+- Garson sipariş testi
+- POS sipariş testi
+- Sipariş durumu testi
+- İptal testi
+- Mükerrer sipariş testi
+
+## Mutfak
+
+- Yeni sipariş bildirimi
+- İstasyon yönlendirme
+- Hazır işaretleme
+- Gecikme uyarısı
+
+## Stok
+
+- Stok girişi
+- Stok çıkışı
+- Reçete düşümü
+- İptal ve iade
+- Sayım
+- Fire
+
+## Ödeme
+
+- Test modu
+- Başarılı ödeme
+- Başarısız ödeme
+- Webhook doğrulama
+- Tekrarlanan işlem
+- İade
+
+## Güvenlik
+
+- CSRF
+- XSS
+- SQL injection
+- Yetkisiz erişim
+- Dosya yükleme
+- Oturum güvenliği
+
+## SEO ve CMS
+
+- Sayfa oluşturma
+- SEO alanları
+- Sitemap
+- Robots
+- Canonical
+- Mobil görünüm
+
+## Yedekleme
+
+- Veritabanı yedeği
+- Dosya yedeği
+- Geri yükleme testi
+
+Kritik hata bulunan modül tamamlandı olarak işaretlenmemelidir.
+
+---
+
+# 33. GELİŞTİRME AŞAMALARI
+
+## Aşama 1 – Temel sistem
+
+- Proje iskeleti
+- Veritabanı
+- Kurulum sihirbazı
+- Giriş sistemi
+- Yetkilendirme
+- Güvenlik
+- Log sistemi
+
+## Aşama 2 – Yönetim paneli
+
+- Dashboard
+- Sidebar
+- Tema
+- Ayarlar
+- Kullanıcı yönetimi
+
+## Aşama 3 – Menü ve QR
+
+- Kategori yönetimi
+- Ürün yönetimi
+- Ürün seçenekleri
+- QR kodlar
+- Müşteri menüsü
+- Sepet
+
+## Aşama 4 – Sipariş ve mutfak
+
+- Sipariş motoru
+- Sipariş durumları
+- Garson ekranı
+- Masa yönetimi
+- Mutfak ekranı
+
+## Aşama 5 – POS ve ödeme
+
+- POS
+- Kasa
+- Çoklu ödeme
+- Ödeme adaptörleri
+- Gün sonu
+
+## Aşama 6 – Stok ve finans
+
+- Stok
+- Reçete
+- Maliyet
+- Tedarikçi
+- Gider
+- Gelir
+- Raporlar
+
+## Aşama 7 – Müşteri ve pazarlama
+
+- CRM
+- Sadakat
+- Kampanya
+- Rezervasyon
+- Paket servis
+
+## Aşama 8 – Web sitesi ve SEO
+
+- CMS
+- Blog
+- Galeri
+- SEO
+- Sitemap
+- Analytics
+
+## Aşama 9 – Entegrasyonlar
+
+- SMS
+- SMTP
+- WhatsApp
+- Ödeme
+- Yazıcı
+- Harita
+- Muhasebe
+
+## Aşama 10 – Son test ve yayın
+
+- Güvenlik testi
+- Mobil test
+- Performans testi
+- Yedekleme testi
+- cPanel kurulumu
+- Canlıya alma
+
+---
+
+# 34. TESLİMAT VE KALİTE KURALLARI
+
+Projenin tesliminde aşağıdaki çıktılar bulunmalıdır:
+
+1. Tam kaynak kodu
+2. SQL veritabanı şeması
+3. Migration dosyaları
+4. Seed dosyaları
+5. Kurulum sihirbazı
+6. Yönetim paneli
+7. QR menü
+8. Garson paneli
+9. Mutfak ekranı
+10. POS
+11. Stok ve reçete sistemi
+12. Müşteri sistemi
+13. CMS
+14. SEO
+15. Ayarlar
+16. Güvenlik sistemi
+17. PWA
+18. Test dosyaları
+19. README
+20. cPanel kurulum rehberi
+21. Sürüm bilgisi
+22. Değişiklik günlüğü
+
+## Kesin geliştirme kuralları
+
+- Çalışmayan buton bırakılmayacak.
+- Formlar gerçek veritabanı işlemi yapacak.
+- Örnek veriler gerçek işletme bilgisi olarak gösterilmeyecek.
+- Ödeme entegrasyonu test edilmeden tamamlandı denmeyecek.
+- Harici servis erişimi gerektiren özellikler açıkça belirtilecek.
+- Veritabanı işlemlerinde veri bütünlüğü korunacak.
+- Kritik işlemler loglanacak.
+- Yetkisiz kullanıcılar yönetim işlemi yapamayacak.
+- Mobil tasarım masaüstünden bağımsız kontrol edilecek.
+- Hata mesajları kullanıcıya anlaşılır gösterilecek.
+- Teknik hata detayları ziyaretçiye gösterilmeyecek.
+- Kurulum ve yükseltme işlemleri veri kaybına neden olmayacak.
+
+---
+
+# SONUÇ
+
+ÖzTike Ciğer Restaurant OS; QR menüden mutfağa, garsondan kasaya, stoktan finansal raporlara kadar restoranın bütün operasyonlarını tek merkezden yönetmeyi amaçlayan modüler bir yazılım projesidir.
+
+**Önemli:** Bu doküman geliştirme şartnamesidir. Kaynak kodları yazılmadan, veritabanı kurulmadan ve uçtan uca testler tamamlanmadan yazılımın hazır veya eksiksiz olduğu iddia edilmemelidir.

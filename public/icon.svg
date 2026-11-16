@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="96" fill="#141413"/>
+  <rect x="28" y="28" width="456" height="456" rx="72" stroke="#D4AF6A" stroke-width="4" stroke-opacity="0.35"/>
+  <!-- Copper Skewers & Flame Emblem -->
+  <path d="M168 376L344 136" stroke="#B86B35" stroke-width="18" stroke-linecap="round"/>
+  <path d="M344 376L168 136" stroke="#B86B35" stroke-width="18" stroke-linecap="round"/>
+  <!-- Fire / Ember Crown -->
+  <path d="M256 96C256 96 298 146 298 188C298 214 279 234 256 234C233 234 214 214 214 188C214 146 256 96 256 96Z" fill="#D4AF6A"/>
+  <path d="M256 138C256 138 278 168 278 192C278 206 268 218 256 218C244 218 234 206 234 192C234 168 256 138 256 138Z" fill="#B86B35"/>
+  <!-- Ornamental Crest Diamond -->
+  <polygon points="256,260 296,300 256,340 216,300" fill="#F5F2EB"/>
+  <polygon points="256,276 280,300 256,324 232,300" fill="#141413"/>
+  <!-- Monogram ÖT -->
+  <text x="256" y="438" text-anchor="middle" fill="#D4AF6A" font-family="Georgia, serif" font-weight="bold" font-size="52" letter-spacing="8">ÖZTİKE</text>
+</svg>

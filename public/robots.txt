@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /pos/
+Disallow: /kds/
+Disallow: /waiter/
+Disallow: /api/
+Disallow: /storage/
+Disallow: /config/
+Disallow: /install/
+
+Sitemap: https://oztikeciger.com.tr/sitemap.xml

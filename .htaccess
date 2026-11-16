@@ -1,0 +1,28 @@
+# ÖzTike Ciğer Restaurant OS - cPanel Apache Güvenlik ve Yönlendirme Yapılandırması
+Options -Indexes
+ServerSignature Off
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Gizli dizinlere ve yapılandırma dosyalarına doğrudan erişimi engelle (Bölüm 25 Güvenlik)
+    RewriteRule ^(config|storage|database|app|modules|tests)/ - [F,L]
+    RewriteRule ^(\.env|\.git|composer\.(json|lock)|VERSION) - [F,L]
+
+    # Kurulum kilitliyse install/ dizinine erişimi engelle (Bölüm 30)
+    RewriteCond %{DOCUMENT_ROOT}/storage/install.lock -f
+    RewriteRule ^install/ - [F,L]
+
+    # Statik dosyalar dışındaki istekleri ön denetleyiciye yönlendir
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
