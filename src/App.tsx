@@ -55,16 +55,22 @@ import {
   createWaiterServiceCall,
   calculateCustomerCheckoutTotals,
   generateReceiptAndInvoiceNumbers,
-  calculateTableOpenBill,
-  isBillRequestNeeds,
   roundCurrency,
+  buildDynamicWebManifest,
+  buildRestaurantJsonLd,
+  buildArchiveEntry,
+  validateTableCandidate,
+  resolveCustomerOrderPaymentIntent,
+  canRequestBillForContext,
+  isBillRequestNeeds,
+  type ArchiveHistoryEntry,
   type StockItem,
   type StockMovement,
   type ReservationItem,
   type WaiterServiceCallRecord,
 } from './core/restaurantEngine';
 import { OfflineIndicator, useOnlineStatus } from './components/BrandIdentity';
-import { CustomerQRPortal } from './components/CustomerQRPortal';
+import { CustomerQRPortal, type NotificationTarget } from './components/CustomerQRPortal';
 import {
   POSKasaTerminal,
   KitchenKDSTerminal,
@@ -85,34 +91,31 @@ export const ADMIN_38_MODULES: MenuModuleDef[] = [
   { id: 1, title: '1. Genel Bakış', group: 'Operasyon' },
   { id: 2, title: '2. Siparişler & Paket', group: 'Operasyon' },
   { id: 3, title: '3. Masalar & Plan', group: 'Operasyon' },
-  { id: 4, title: '4. QR Menü & Masa Ayarları', group: 'Operasyon' },
-  { id: 5, title: '5. Ürünler', group: 'Menü & Mutfak' },
-  { id: 6, title: '6. Kategoriler', group: 'Menü & Mutfak' },
-  { id: 7, title: '7. Mutfak (KDS) & İstasyonlar', group: 'Menü & Mutfak' },
-  { id: 8, title: '8. Garson Çağrıları', group: 'Operasyon' },
-  { id: 11, title: '9. Rezervasyonlar', group: 'Teslimat & Rezervasyon' },
-  { id: 12, title: '10. POS / Kasa & Fiş Ayarları', group: 'Kasa & Finans' },
-  { id: 13, title: '11. Ödemeler & e-Fatura', group: 'Kasa & Finans' },
-  { id: 14, title: '12. Stok Yönetimi', group: 'Stok & Reçete' },
-  { id: 15, title: '13. Reçete & Maliyet', group: 'Stok & Reçete' },
-  { id: 17, title: '14. Müşteriler & Sadakat', group: 'CRM & Pazarlama' },
-  { id: 19, title: '15. Kampanyalar & Kupon', group: 'CRM & Pazarlama' },
-  { id: 22, title: '16. Gelir-Gider & AI Analiz', group: 'Kasa & Finans' },
-  { id: 26, title: '17. Duyuru, Logo & Header', group: 'Web & CMS' },
-  { id: 27, title: '18. Menüler & Sayfalar', group: 'Web & CMS' },
-  { id: 28, title: '19. SEO Yönetimi', group: 'Web & CMS' },
-  { id: 29, title: '20. Foto & Video Galeri', group: 'Web & CMS' },
-  { id: 39, title: '21. Sosyal Medya & Footer', group: 'Web & CMS' },
-  { id: 31, title: '22. Eklenti, Modül & Entegrasyon', group: 'Sistem & Güvenlik' },
-  { id: 33, title: '23. Şube Yönetimi', group: 'Sistem & Güvenlik' },
-  { id: 34, title: '24. Slider, Kartlar & Tema', group: 'Sistem & Güvenlik' },
-  { id: 35, title: '25. Genel Ayarlar', group: 'Sistem & Güvenlik' },
-  { id: 36, title: '26. Güvenlik & Yetkiler', group: 'Sistem & Güvenlik' },
-  { id: 37, title: '27. Yedekleme', group: 'Sistem & Güvenlik' },
-  { id: 38, title: '28. İşlem Kayıtları', group: 'Sistem & Güvenlik' },
-  { id: 40, title: '29. Geçmiş & Gün Sonu Arşivi', group: 'Kasa & Finans' },
-  { id: 41, title: '30. PWA Uygulama Yönetimi', group: 'Sistem & Güvenlik' },
-  { id: 42, title: '31. Harita & Konum Yönetimi', group: 'Web & CMS' },
+  { id: 5, title: '4. Ürünler', group: 'Menü & Mutfak' },
+  { id: 6, title: '5. Kategoriler', group: 'Menü & Mutfak' },
+  { id: 7, title: '6. Mutfak (KDS) [İsteğe Bağlı]', group: 'Menü & Mutfak' },
+  { id: 8, title: '7. Garson Çağrıları', group: 'Operasyon' },
+  { id: 11, title: '8. Rezervasyonlar', group: 'Teslimat & Rezervasyon' },
+  { id: 12, title: '9. Ödeme, POS, Kasa & Fiş', group: 'Kasa & Finans' },
+  { id: 14, title: '10. Stok Yönetimi', group: 'Stok & Reçete' },
+  { id: 15, title: '11. Reçete & Maliyet', group: 'Stok & Reçete' },
+  { id: 17, title: '12. Üye Yönetimi', group: 'CRM & Pazarlama' },
+  { id: 19, title: '13. Kampanyalar & Kupon', group: 'CRM & Pazarlama' },
+  { id: 22, title: '14. Gelir-Gider & AI Analiz', group: 'Kasa & Finans' },
+  { id: 26, title: '15. Duyuru & Popup Pencere', group: 'Web & CMS' },
+  { id: 27, title: '16. Sayfalar', group: 'Web & CMS' },
+  { id: 28, title: '17. SEO Yönetimi', group: 'Web & CMS' },
+  { id: 29, title: '18. Foto & Video Galeri', group: 'Web & CMS' },
+  { id: 31, title: '19. Eklentiler', group: 'Sistem & Güvenlik' },
+  { id: 33, title: '20. Şube Yönetimi', group: 'Sistem & Güvenlik' },
+  { id: 34, title: '21. Tasarım', group: 'Web & CMS' },
+  { id: 35, title: '22. Genel Ayarlar', group: 'Sistem & Güvenlik' },
+  { id: 36, title: '23. Güvenlik & Yetkiler', group: 'Sistem & Güvenlik' },
+  { id: 37, title: '24. Yedekleme', group: 'Sistem & Güvenlik' },
+  { id: 38, title: '25. İşlem Kayıtları', group: 'Sistem & Güvenlik' },
+  { id: 40, title: '26. Geçmiş & Gün Sonu Arşivi', group: 'Kasa & Finans' },
+  { id: 41, title: '27. PWA Uygulama Stüdyosu', group: 'Sistem & Güvenlik' },
+  { id: 42, title: '28. Harita & Konum Yönetimi', group: 'Web & CMS' },
 ];
 
 export function App() {
@@ -260,7 +263,7 @@ export function App() {
             ...INITIAL_SITE_CMS_CONFIG.header,
             ...(parsed?.header || {}),
             logoUrl: cleanLogoUrl,
-            faviconUrl: ORIGINAL_LOGO,
+            faviconUrl: parsed?.header?.faviconUrl || cleanLogoUrl || ORIGINAL_LOGO,
             logoPresets:
               cleanPresets.length > 0 ? cleanPresets : INITIAL_SITE_CMS_CONFIG.header.logoPresets,
             navMenus: Array.isArray(parsed?.header?.navMenus)
@@ -327,6 +330,44 @@ export function App() {
             ...INITIAL_SITE_CMS_CONFIG.modules,
             ...(parsed?.modules || {}),
           },
+          pwaSettings: {
+            ...INITIAL_SITE_CMS_CONFIG.pwaSettings,
+            ...(parsed?.pwaSettings || {}),
+            screenshots: Array.isArray(parsed?.pwaSettings?.screenshots)
+              ? parsed.pwaSettings.screenshots
+              : INITIAL_SITE_CMS_CONFIG.pwaSettings.screenshots,
+            shortcuts: Array.isArray(parsed?.pwaSettings?.shortcuts)
+              ? parsed.pwaSettings.shortcuts
+              : INITIAL_SITE_CMS_CONFIG.pwaSettings.shortcuts,
+          },
+          promoPopup: {
+            ...INITIAL_SITE_CMS_CONFIG.promoPopup,
+            ...(parsed?.promoPopup || {}),
+          },
+          paymentMethodsV2Migrated: true,
+          paymentMethods:
+            parsed?.paymentMethodsV2Migrated &&
+            Array.isArray(parsed?.paymentMethods) &&
+            parsed.paymentMethods.length > 0
+              ? parsed.paymentMethods
+              : INITIAL_SITE_CMS_CONFIG.paymentMethods,
+          reservationSettings: {
+            ...INITIAL_SITE_CMS_CONFIG.reservationSettings,
+            ...(parsed?.reservationSettings || {}),
+          },
+          mapSettings: {
+            ...INITIAL_SITE_CMS_CONFIG.mapSettings,
+            ...(parsed?.mapSettings || {}),
+          },
+          receiptSettings: {
+            ...INITIAL_SITE_CMS_CONFIG.receiptSettings,
+            ...(parsed?.receiptSettings || {}),
+          },
+          operationalSettings: {
+            ...INITIAL_SITE_CMS_CONFIG.operationalSettings,
+            ...(parsed?.operationalSettings || {}),
+            orderTrackingEnabled: parsed?.operationalSettings?.orderTrackingEnabled ?? false,
+          },
         };
       }
     } catch {
@@ -343,21 +384,138 @@ export function App() {
     }
   }, [siteCmsConfig]);
 
-  // Dinamik Tema Tasarım Editörü: Logo Ana Renklerini (Bakır & Şampanya) CSS Değişkenlerine Bağlama
+  // Dynamic PWA manifest, SEO meta tags, Schema.org JSON-LD, theme-color, and title sync
   useEffect(() => {
-    if (siteCmsConfig?.design) {
-      const root = document.documentElement;
-      root.style.setProperty('--color-primary', siteCmsConfig.design.primaryColor || '#D4A359');
-      root.style.setProperty('--color-secondary', siteCmsConfig.design.secondaryColor || '#B0782C');
-      root.style.setProperty('--color-bg', siteCmsConfig.design.backgroundColor || '#120806');
-      root.style.setProperty('--color-surface', siteCmsConfig.design.surfaceColor || '#1A0C09');
+    if (typeof document === 'undefined') return;
+    const seo = siteCmsConfig.seo;
+    if (seo?.metaTitleTr) {
+      document.title = seo.metaTitleTr;
     }
-  }, [siteCmsConfig?.design]);
+    const upsertMeta = (attrName: 'name' | 'property', key: string, content?: string) => {
+      if (!content) return;
+      let el = document.querySelector(`meta[${attrName}="${key}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(attrName, key);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', content);
+    };
 
-  // Core Application State (Müşteri ve Admin panelleri arasında senkronize)
-  const [categories, setCategories] = useState<CategoryItem[]>(INITIAL_CATEGORIES);
-  const [products, setProducts] = useState<ProductItem[]>(INITIAL_PRODUCTS);
-  const [packages, setPackages] = useState<MenuPackageItem[]>(INITIAL_MENU_PACKAGES);
+    upsertMeta('name', 'description', seo?.metaDescriptionTr);
+    upsertMeta('name', 'keywords', seo?.keywords);
+    upsertMeta('name', 'robots', seo?.robots);
+    upsertMeta('property', 'og:title', seo?.metaTitleTr);
+    upsertMeta('property', 'og:description', seo?.metaDescriptionTr);
+    upsertMeta('property', 'og:image', seo?.ogImageUrl);
+    upsertMeta('name', 'twitter:card', seo?.twitterCard || 'summary_large_image');
+    upsertMeta('name', 'twitter:title', seo?.metaTitleTr);
+    upsertMeta('name', 'twitter:description', seo?.metaDescriptionTr);
+
+    if (seo?.canonicalUrl) {
+      let canonicalLink = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+      if (!canonicalLink) {
+        canonicalLink = document.createElement('link');
+        canonicalLink.rel = 'canonical';
+        document.head.appendChild(canonicalLink);
+      }
+      canonicalLink.href = seo.canonicalUrl;
+    }
+
+    if (seo) {
+      const jsonLdText = buildRestaurantJsonLd({
+        brandTitle: siteCmsConfig.header?.brandTitle || 'ÖzTike Ciğer',
+        seo,
+        address: siteCmsConfig.contact?.addressTr || 'Şahinbey / Gaziantep',
+        phone: siteCmsConfig.contact?.phoneDisplay || '+90 342 000 00 00',
+      });
+      let ldScript = document.getElementById('oztike-jsonld') as HTMLScriptElement | null;
+      if (!ldScript) {
+        ldScript = document.createElement('script');
+        ldScript.id = 'oztike-jsonld';
+        ldScript.type = 'application/ld+json';
+        document.head.appendChild(ldScript);
+      }
+      ldScript.textContent = jsonLdText;
+    }
+
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta && siteCmsConfig.pwaSettings?.themeColor) {
+      themeMeta.setAttribute('content', siteCmsConfig.pwaSettings.themeColor);
+    }
+
+    const activeFavicon =
+      siteCmsConfig.header?.faviconUrl ||
+      siteCmsConfig.header?.logoUrl ||
+      '/assets/aistudio/oztike-logo-transparent.png';
+    const upsertIconLink = (relValue: string, hrefValue: string) => {
+      let iconEl = document.querySelector(`link[rel="${relValue}"]`) as HTMLLinkElement | null;
+      if (!iconEl) {
+        iconEl = document.createElement('link');
+        iconEl.rel = relValue;
+        document.head.appendChild(iconEl);
+      }
+      iconEl.href = hrefValue;
+    };
+    upsertIconLink('icon', activeFavicon);
+    upsertIconLink('shortcut icon', activeFavicon);
+    upsertIconLink('apple-touch-icon', activeFavicon);
+
+    if (!siteCmsConfig.pwaSettings?.enabled) return;
+    const manifestObj = buildDynamicWebManifest(siteCmsConfig.pwaSettings);
+    const blob = new Blob([JSON.stringify(manifestObj, null, 2)], {
+      type: 'application/manifest+json',
+    });
+    const blobUrl = URL.createObjectURL(blob);
+    let link = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'manifest';
+      document.head.appendChild(link);
+    }
+    link.href = blobUrl;
+
+    return () => {
+      URL.revokeObjectURL(blobUrl);
+    };
+  }, [
+    siteCmsConfig.pwaSettings,
+    siteCmsConfig.seo,
+    siteCmsConfig.header?.brandTitle,
+    siteCmsConfig.header?.faviconUrl,
+    siteCmsConfig.header?.logoUrl,
+    siteCmsConfig.contact?.addressTr,
+    siteCmsConfig.contact?.phoneDisplay,
+  ]);
+
+  // Core Application State (Müşteri ve Admin panelleri arasında senkronize + kalıcı)
+  const [categories, setCategories] = useState<CategoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_categories_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_CATEGORIES;
+  });
+  const [products, setProducts] = useState<ProductItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_products_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_PRODUCTS;
+  });
+  const [packages, setPackages] = useState<MenuPackageItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_packages_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_MENU_PACKAGES;
+  });
   const [tables, setTables] = useState<DiningTableItem[]>(() => {
     try {
       const saved = localStorage.getItem('oztike_tables_v3');
@@ -391,7 +549,15 @@ export function App() {
   });
   const [stocks, setStocks] = useState<StockItem[]>(INITIAL_STOCKS);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_STOCK_MOVEMENTS);
-  const [customers, setCustomers] = useState<CustomerRecord[]>(INITIAL_CUSTOMERS);
+  const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_customers_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_CUSTOMERS;
+  });
   const [customerReviews, setCustomerReviews] = useState<CustomerReviewItem[]>(() => {
     try {
       const saved = localStorage.getItem('oztike_customer_reviews_v1');
@@ -433,15 +599,46 @@ export function App() {
     }
     return [];
   });
-  const [reservations, setReservations] = useState<ReservationItem[]>(INITIAL_RESERVATIONS);
-  const [campaigns, setCampaigns] = useState<CampaignRecord[]>(INITIAL_CAMPAIGNS);
-  const [staff, setStaff] = useState<StaffMember[]>(INITIAL_STAFF);
+  const [reservations, setReservations] = useState<ReservationItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_reservations_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_RESERVATIONS;
+  });
+  const [campaigns, setCampaigns] = useState<CampaignRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_campaigns_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_CAMPAIGNS;
+  });
+  const [staff, setStaff] = useState<StaffMember[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_staff_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_STAFF;
+  });
   const [financeLedger, setFinanceLedger] = useState<FinanceLedgerItem[]>(INITIAL_FINANCE_LEDGER);
   const [cmsPages, setCmsPages] = useState<CMSPageItem[]>(INITIAL_CMS_PAGES);
   const [integrations, setIntegrations] = useState<IntegrationPluginItem[]>(() => {
     try {
       const saved = localStorage.getItem('oztike_integrations_v1');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved) as IntegrationPluginItem[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingIds = new Set(parsed.map((i) => i.id));
+          const missingDefaults = INITIAL_INTEGRATIONS.filter((i) => !existingIds.has(i.id));
+          return [...parsed, ...missingDefaults];
+        }
+      }
     } catch {
       // fallback
     }
@@ -449,7 +646,34 @@ export function App() {
   });
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
   const [backups, setBackups] = useState<BackupEntry[]>(INITIAL_BACKUPS);
-  const [branches, setBranches] = useState<BranchItem[]>(INITIAL_BRANCHES);
+  const [branches, setBranches] = useState<BranchItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_branches_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return INITIAL_BRANCHES;
+  });
+  const [archiveHistory, setArchiveHistory] = useState<ArchiveHistoryEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem('oztike_archive_history_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return [
+      buildArchiveEntry({
+        type: 'Gün Sonu Özeti',
+        title: '15 Kas 2026 · Merkez Şube Z-Raporu',
+        subtitle: '48 Sipariş · Nakit: 18.420 ₺ · Kart/Online: 36.180 ₺',
+        amount: 54600,
+        reason: 'Otomatik gece 23:59 gün sonu kapanışı',
+        dateKey: '2026-11-15',
+        archivedAt: '2026-11-15 23:59:00',
+      }),
+    ];
+  });
   const [waiterCalls, setWaiterCalls] = useState<WaiterServiceCallRecord[]>(() => {
     try {
       const saved = localStorage.getItem('oztike_waiter_calls_v3');
@@ -459,14 +683,6 @@ export function App() {
     }
     return INITIAL_WAITER_CALLS;
   });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('oztike_integrations_v1', JSON.stringify(integrations));
-    } catch {
-      // ignore
-    }
-  }, [integrations]);
 
   useEffect(() => {
     try {
@@ -508,29 +724,49 @@ export function App() {
     }
   }, [customerComplaints]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('oztike_categories_v1', JSON.stringify(categories));
+      localStorage.setItem('oztike_products_v1', JSON.stringify(products));
+      localStorage.setItem('oztike_packages_v1', JSON.stringify(packages));
+      localStorage.setItem('oztike_campaigns_v1', JSON.stringify(campaigns));
+      localStorage.setItem('oztike_integrations_v1', JSON.stringify(integrations));
+      localStorage.setItem('oztike_staff_v1', JSON.stringify(staff));
+      localStorage.setItem('oztike_reservations_v1', JSON.stringify(reservations));
+      localStorage.setItem('oztike_branches_v1', JSON.stringify(branches));
+      localStorage.setItem('oztike_archive_history_v1', JSON.stringify(archiveHistory));
+      localStorage.setItem('oztike_customers_v1', JSON.stringify(customers));
+    } catch {
+      // ignore storage quota
+    }
+  }, [categories, products, packages, campaigns, integrations, staff, reservations, branches, archiveHistory, customers]);
+
   const [notifications, setNotifications] = useState<
-    { id: string; title: string; detail: string; time: string; unread: boolean }[]
+    { id: string; title: string; detail: string; time: string; unread: boolean; target?: NotificationTarget }[]
   >([
     {
       id: 'NTF-1',
-      title: 'Yeni Masa QR Siparişi (#OZT-2026-1042)',
-      detail: 'Bahçe 1 masasından 665,00 ₺ tutarında sipariş mutfağa iletildi.',
+      title: 'Öğle Ciğer Şiş Kampanyası (%15 İndirim)',
+      detail: 'OGLECIGER15 kupon koduyla hemen indirimli sipariş verin!',
       time: '13:18',
       unread: true,
+      target: { type: 'campaign' },
     },
     {
       id: 'NTF-2',
-      title: 'Geciken Sipariş Uyarısı (#OZT-2026-1041)',
-      detail: 'Salon 1 siparişi hedef süreyi (14 dk) aştı (17 dk).',
+      title: 'Halil Usta’nın Özel Önerisi: Ciğer Şiş',
+      detail: 'Meşe közünde günlük taze erkek kuzu ciğeri ve 7 çeşit köz meze ikramı.',
       time: '13:20',
       unread: true,
+      target: { type: 'product', id: 'PRD-01' },
     },
     {
       id: 'NTF-3',
-      title: 'Kritik Stok Uyarısı',
-      detail: 'Günlük Taze Kuzu Ciğeri stoğu (14.5 kg) kritik eşiğin (15.0 kg) altına düştü.',
+      title: 'Yeni Sesli Tanıtım Videolarımız Yayında',
+      detail: 'Ocakbaşı ustalığımızı ve salon atmosferimizi hemen izleyin.',
       time: '12:45',
       unread: true,
+      target: { type: 'gallery' },
     },
   ]);
 
@@ -558,18 +794,23 @@ export function App() {
     ]);
   };
 
-  const pushNotification = (title: string, detail: string) => {
+  const pushNotification = (title: string, detail: string, target?: NotificationTarget) => {
     const nowStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     setNotifications((prev) => [
       {
-        id: `NTF-${Date.now()}`,
+        id: `NTF-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         title,
         detail,
         time: nowStr,
         unread: true,
+        target,
       },
       ...prev,
     ]);
+  };
+
+  const handleMarkNotificationRead = (id: string) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)));
   };
 
   const handleDismissNotification = (id: string) => {
@@ -590,7 +831,8 @@ export function App() {
     setCustomerReviews((prev) => [entry, ...prev]);
     pushNotification(
       `Yeni Müşteri Yorumu (${review.rating}★)`,
-      `${review.customerName}: "${review.comment.slice(0, 60)}${review.comment.length > 60 ? '...' : ''}"`
+      `${review.customerName}: "${review.comment.slice(0, 60)}${review.comment.length > 60 ? '...' : ''}"`,
+      { type: 'member' }
     );
     recordAudit('CRM & Yorumlar', 'Yeni Müşteri Değerlendirmesi', `${review.customerName} (${review.rating}/5 yıldız)`);
   };
@@ -607,7 +849,8 @@ export function App() {
     setCustomerComplaints((prev) => [entry, ...prev]);
     pushNotification(
       `Müşteri Şikayet Bildirimi (${complaint.subject})`,
-      `${complaint.customerName} (${complaint.customerPhone}): ${complaint.message.slice(0, 65)}`
+      `${complaint.customerName} (${complaint.customerPhone}): ${complaint.message.slice(0, 65)}`,
+      { type: 'member' }
     );
     recordAudit('CRM & Şikayetler', 'Yeni Şikayet Kaydı', `${complaint.customerName} - ${complaint.subject}`, 'Uyarı');
   };
@@ -639,6 +882,10 @@ export function App() {
     discountAmount?: number;
     couponCode?: string;
     paymentMethod?: string;
+    paymentType?: 'cash' | 'pos' | 'online_card' | 'meal_card' | 'transfer' | 'wallet';
+    payNow?: boolean;
+    cardHolderName?: string;
+    cardLast4?: string;
     tipAmount?: number;
     items: {
       product: ProductItem;
@@ -646,8 +893,15 @@ export function App() {
       options: { name: string; value: string; extraPrice: number }[];
       customerNote: string;
     }[];
-  }): { success: boolean; message: string; orderNumber?: string } => {
+  }): {
+    success: boolean;
+    message: string;
+    orderNumber?: string;
+    paidNow?: boolean;
+    receiptNumber?: string;
+  } => {
     const targetTable = tables.find((t) => t.id === payload.tableId);
+    const tableSelectionEnabled = siteCmsConfig.operationalSettings?.tableSelectionEnabled === true;
     const qrValidation = validateQROrderRequest(
       targetTable
         ? {
@@ -655,6 +909,15 @@ export function App() {
             tableNumber: targetTable.number,
             token: targetTable.qrToken,
             isRevoked: targetTable.qrRevoked,
+            requestsLastMinute: 1,
+            rateLimitPerMin: siteCmsConfig.operationalSettings?.qrRateLimitPerMin || 20,
+          }
+        : !tableSelectionEnabled
+        ? {
+            tableId: 'DIRECT-ORDER',
+            tableNumber: 'Doğrudan Sipariş',
+            token: '',
+            isRevoked: false,
             requestsLastMinute: 1,
             rateLimitPerMin: 20,
           }
@@ -666,7 +929,7 @@ export function App() {
     );
 
     if (payload.channel === 'QR' && !qrValidation.valid) {
-      return { success: false, message: qrValidation.error || 'QR doğrulaması başarısız.' };
+      return { success: false, message: qrValidation.error || 'Sipariş doğrulaması başarısız.' };
     }
 
     const orderNumber = `OZT-2026-${1043 + orders.length}`;
@@ -706,10 +969,22 @@ export function App() {
     const finalTotal = checkoutSummary.finalTotal;
     const tipAmt = checkoutSummary.tipAmount;
     const taxAmount = checkoutSummary.taxAmount;
-    const chosenMethod = payload.paymentMethod || 'Kapıda / Masada Kart (POS)';
-    const isInstantOnlinePaid = chosenMethod.toLowerCase().includes('online');
-    const autoDocs = isInstantOnlinePaid
-      ? generateReceiptAndInvoiceNumbers(orderNumber)
+    const paymentIntent = resolveCustomerOrderPaymentIntent({
+      payNow: payload.payNow,
+      paymentMethod: payload.paymentMethod,
+      paymentType: payload.paymentType,
+      finalTotal,
+      orderNumber,
+    });
+    const chosenMethod = payload.cardLast4
+      ? `${paymentIntent.paymentMethodLabel} (•••• ${payload.cardLast4})`
+      : paymentIntent.paymentMethodLabel;
+    const isInstantOnlinePaid = paymentIntent.isPaidNow;
+    const autoDocs = isInstantOnlinePaid && paymentIntent.receiptNumber && paymentIntent.eInvoiceNo
+      ? {
+          receiptNumber: paymentIntent.receiptNumber,
+          eInvoiceNo: paymentIntent.eInvoiceNo,
+        }
       : null;
 
     if (isInstantOnlinePaid) {
@@ -737,7 +1012,7 @@ export function App() {
           description: `${orderNumber} (${payload.channel}) · Fiş: ${autoDocs?.receiptNumber}`,
           amount: finalTotal,
           paymentMethod: chosenMethod,
-          recordedBy: 'Otomatik POS / iyzico',
+          recordedBy: payload.cardHolderName ? `Online (${payload.cardHolderName})` : 'Otomatik POS / iyzico',
           branchId: 'BR-01',
         },
         ...prev,
@@ -750,10 +1025,10 @@ export function App() {
       idempotencyKey: payload.idempotencyKey,
       channel: payload.channel,
       status: 'Mutfağa gönderildi',
-      tableId: payload.channel === 'QR' ? payload.tableId : null,
+      tableId: payload.channel === 'QR' && targetTable ? payload.tableId : null,
       tableName:
         payload.channel === 'QR'
-          ? targetTable?.number || 'Masa'
+          ? targetTable?.number || 'Doğrudan Sipariş'
           : payload.channel === 'Gel-Al'
           ? 'Gel-Al Bankosu'
           : 'Paket Servis',
@@ -770,8 +1045,8 @@ export function App() {
       tipAmount: tipAmt,
       taxAmount,
       totalAmount: finalTotal,
-      paidAmount: isInstantOnlinePaid ? finalTotal : 0,
-      paymentStatus: isInstantOnlinePaid ? 'Ödendi' : 'Ödenmedi',
+      paidAmount: paymentIntent.paidAmount,
+      paymentStatus: paymentIntent.paymentStatus,
       paymentMethod: chosenMethod,
       receiptNumber: autoDocs?.receiptNumber,
       eInvoiceNo: autoDocs?.eInvoiceNo,
@@ -825,7 +1100,7 @@ export function App() {
                 ...t,
                 status: 'Hazırlanıyor',
                 currentOrderId: newOrder.id,
-                openBalance: roundCurrency(t.openBalance + finalTotal),
+                openBalance: roundCurrency(t.openBalance + paymentIntent.tableBalanceDelta),
               }
             : t
         )
@@ -834,18 +1109,23 @@ export function App() {
 
     recordAudit(
       'Sipariş & Reçete',
-      'Yeni Sipariş ve Stok Düşümü',
-      `${orderNumber} (${finalTotal.toFixed(2)} ₺ · ${targetTable?.qrCodeNumber || payload.channel}) oluşturuldu, reçete malzemeleri stoktan otomatik düşüldü.`
+      isInstantOnlinePaid ? 'Ödemeli Sipariş & Stok Düşümü' : 'Yeni Sipariş ve Stok Düşümü',
+      `${orderNumber} (${finalTotal.toFixed(2)} ₺ · ${targetTable?.qrCodeNumber || payload.channel} · ${paymentIntent.paymentStatus}) oluşturuldu, reçete malzemeleri stoktan otomatik düşüldü.`
     );
     pushNotification(
       `Yeni ${payload.channel} Siparişi (${orderNumber})`,
-      `${newOrder.tableName} (${targetTable?.qrCodeNumber || ''}) için ${finalTotal.toFixed(2)} ₺ tutarında sipariş mutfak ekranına (KDS) düştü.`
+      `${newOrder.tableName} (${targetTable?.qrCodeNumber || ''}) için ${finalTotal.toFixed(2)} ₺ (${paymentIntent.paymentStatus}) sipariş mutfağa düştü.`,
+      { type: 'cart' }
     );
 
     return {
       success: true,
-      message: 'Siparişiniz mutfak ekranına (KDS) ve sorumlu garsona iletildi.',
+      message: isInstantOnlinePaid
+        ? `Ödemeniz (${finalTotal.toFixed(2)} ₺) onaylandı ve siparişiniz mutfağa iletildi.`
+        : `Siparişiniz alındı (#${orderNumber}). Ödeme (${chosenMethod}) bekleniyor.`,
       orderNumber,
+      paidNow: isInstantOnlinePaid,
+      receiptNumber: autoDocs?.receiptNumber,
     };
   };
 
@@ -861,9 +1141,32 @@ export function App() {
     const targetTable = tables.find((t) => t.id === payload.tableId);
     const nowStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
-    const isBill = isBillRequestNeeds(payload.selectedNeeds, payload.customNote);
-    const tableOrders = targetTable ? orders.filter((o) => o.tableId === targetTable.id) : [];
-    const calculatedBill = targetTable ? calculateTableOpenBill(targetTable.openBalance || 0, tableOrders) : 0;
+    if (isBillRequestNeeds(payload.selectedNeeds, payload.customNote)) {
+      const tableUnpaidOrders = orders.filter(
+        (o) =>
+          o.status !== 'İptal edildi' &&
+          o.status !== 'İade edildi' &&
+          o.paymentStatus !== 'Ödendi' &&
+          (!targetTable || o.tableId === targetTable.id)
+      );
+      const unpaidSum = tableUnpaidOrders.reduce(
+        (s, o) => s + Math.max(0, o.totalAmount - o.paidAmount),
+        0
+      );
+      const billCheck = canRequestBillForContext({
+        tableOpenBalance: targetTable?.openBalance || 0,
+        unpaidOrdersCount: tableUnpaidOrders.length,
+        unpaidOrdersTotal: unpaidSum,
+      });
+      if (!billCheck.allowed) {
+        return {
+          success: false,
+          message:
+            billCheck.reason ||
+            'Açık veya ödenmemiş hesabınız bulunmuyor. Hesap isteme işlemi gerçekleştirilemedi.',
+        };
+      }
+    }
 
     const validation = createWaiterServiceCall({
       qrRecord: targetTable
@@ -881,11 +1184,8 @@ export function App() {
       qrCodeNumber: targetTable?.qrCodeNumber || 'QR-MASA',
       assignedWaiter: targetTable?.waiterName || 'Nöbetçi Garson',
       selectedNeeds: payload.selectedNeeds,
-      customNote: isBill && calculatedBill > 0
-        ? `${payload.customNote ? `${payload.customNote} · ` : ''}Açık Hesap Tutarı: ₺${calculatedBill.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}`
-        : payload.customNote,
+      customNote: payload.customNote,
       timestamp: nowStr,
-      calculatedBillAmount: isBill ? calculatedBill : undefined,
     });
 
     if (!validation.valid || !validation.callRecord || !targetTable) {
@@ -911,9 +1211,6 @@ export function App() {
           ? {
               ...t,
               waiterCalled: true,
-              billRequested: isBill ? true : t.billRequested,
-              status: isBill ? 'Hesap bekliyor' : t.status,
-              openBalance: isBill && calculatedBill > 0 ? calculatedBill : t.openBalance,
               activeServiceRequests: callRec.selectedNeeds,
               serviceRequestNote: callRec.customNote,
               serviceRequestTime: nowStr,
@@ -925,7 +1222,8 @@ export function App() {
     const needsText = callRec.selectedNeeds.join(', ');
     pushNotification(
       `QR Garson Çağrısı (${targetTable.qrCodeNumber} · ${targetTable.number})`,
-      `Sorumlu Garson ${targetTable.waiterName} için talepler: ${needsText}`
+      `Sorumlu Garson ${targetTable.waiterName} için talepler: ${needsText}`,
+      { type: 'waiter' }
     );
     recordAudit(
       'QR Garson Servisi',
@@ -1360,58 +1658,46 @@ export function App() {
     };
   };
 
-  const handleRequestBillShared = (tableId: string) => {
+  const handleRequestBillShared = (tableId: string): { success: boolean; message: string } => {
     const tbl = tables.find((t) => t.id === tableId);
-    const tableOrders = orders.filter((o) => o.tableId === tableId);
-    const calculatedBill = calculateTableOpenBill(tbl?.openBalance || 0, tableOrders);
+    const unpaidForTable = orders.filter(
+      (o) =>
+        o.tableId === tableId &&
+        o.status !== 'İptal edildi' &&
+        o.status !== 'İade edildi' &&
+        o.paymentStatus !== 'Ödendi'
+    );
+    const unpaidSum = unpaidForTable.reduce(
+      (s, o) => s + Math.max(0, o.totalAmount - o.paidAmount),
+      0
+    );
+    const billCheck = canRequestBillForContext({
+      tableOpenBalance: tbl?.openBalance || 0,
+      unpaidOrdersCount: unpaidForTable.length,
+      unpaidOrdersTotal: unpaidSum,
+    });
+    if (!billCheck.allowed) {
+      return {
+        success: false,
+        message: billCheck.reason || 'Açık hesabınız bulunmuyor.',
+      };
+    }
 
     setTables((prev) =>
       prev.map((t) =>
-        t.id === tableId
-          ? {
-              ...t,
-              billRequested: true,
-              status: 'Hesap bekliyor',
-              openBalance: calculatedBill > 0 ? calculatedBill : t.openBalance,
-            }
-          : t
+        t.id === tableId ? { ...t, billRequested: true, status: 'Hesap bekliyor' } : t
       )
     );
-
-    const billCall = createWaiterServiceCall({
-      qrRecord: tbl
-        ? {
-            tableId: tbl.id,
-            tableNumber: tbl.number,
-            token: tbl.qrToken,
-            isRevoked: tbl.qrRevoked,
-            requestsLastMinute: 1,
-            rateLimitPerMin: 20,
-          }
-        : undefined,
-      providedToken: tbl?.qrToken || 'TOKEN-MANUEL',
-      tableArea: tbl?.area || 'Ana Salon',
-      qrCodeNumber: tbl?.qrCodeNumber || 'QR-MASA',
-      assignedWaiter: tbl?.waiterName || 'Halil Usta',
-      selectedNeeds: ['Hesap İsteme', 'Mobil POS'],
-      customNote: `Açık Adisyon Hesabı: ₺${calculatedBill.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}`,
-      timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-      calculatedBillAmount: calculatedBill,
-    });
-
-    if (billCall.callRecord) {
-      setWaiterCalls((prev) => [billCall.callRecord!, ...prev]);
-    }
-
     pushNotification(
-      `Hesap Talebi: ${tbl?.number || 'Masa'} (₺${calculatedBill.toLocaleString('tr-TR', { minimumFractionDigits: 2 })})`,
-      `${tbl?.number || 'Masa'} hesap istedi. Toplam Masa Hesabı: ₺${calculatedBill.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} (Sorumlu: ${tbl?.waiterName || 'Garson'}).`
+      `Hesap Talebi (${tbl?.qrCodeNumber || ''})`,
+      `${tbl?.number || 'Masa'} hesap istedi (Sorumlu Garson: ${tbl?.waiterName}).`,
+      { type: 'cart' }
     );
-    recordAudit(
-      'QR Menü',
-      'Hesap İsteme',
-      `${tbl?.number} (${tbl?.qrCodeNumber}) hesap talebi gönderdi. Sistemce Hesaplanan Masa Hesabı: ₺${calculatedBill}.`
-    );
+    recordAudit('QR Menü', 'Hesap İsteme', `${tbl?.number} (${tbl?.qrCodeNumber}) hesap talebi gönderdi.`);
+    return {
+      success: true,
+      message: `${tbl?.number || 'Masa'} hesap talebiniz (${billCheck.totalOpenAmount.toFixed(2)} ₺) iletildi.`,
+    };
   };
 
   // ===========================================================================
@@ -1439,6 +1725,7 @@ export function App() {
           onChangeLang={setLang}
           notifications={notifications}
           onPushNotification={pushNotification}
+          onMarkNotificationRead={handleMarkNotificationRead}
           onMarkAllNotificationsRead={() =>
             setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })))
           }
@@ -1527,20 +1814,22 @@ export function App() {
           >
             POS Kasa
           </a>
-          <a
-            href="#kds"
-            onClick={(e) => {
-              e.preventDefault();
-              setWorkspaceView('kds');
-            }}
-            className={`hover:text-neutral-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 ${
-              workspaceView === 'kds'
-                ? 'text-[#B86B35] dark:text-[#D4AF6A] underline underline-offset-8'
-                : ''
-            }`}
-          >
-            Mutfak KDS
-          </a>
+          {siteCmsConfig.operationalSettings?.kitchenModuleEnabled && (
+            <a
+              href="#kds"
+              onClick={(e) => {
+                e.preventDefault();
+                setWorkspaceView('kds');
+              }}
+              className={`hover:text-neutral-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 ${
+                workspaceView === 'kds'
+                  ? 'text-[#B86B35] dark:text-[#D4AF6A] underline underline-offset-8'
+                  : ''
+              }`}
+            >
+              Mutfak KDS
+            </a>
+          )}
           <a
             href="#garson"
             onClick={(e) => {
@@ -1606,7 +1895,9 @@ export function App() {
               [
                 { id: 'admin', label: 'Yönetim' },
                 { id: 'pos', label: 'POS' },
-                { id: 'kds', label: 'Mutfak' },
+                ...(siteCmsConfig.operationalSettings?.kitchenModuleEnabled
+                  ? [{ id: 'kds' as const, label: 'Mutfak' }]
+                  : []),
                 { id: 'waiter', label: 'Garson' },
                 { id: 'qr_web', label: 'QR Menü' },
               ] as const
@@ -1631,12 +1922,12 @@ export function App() {
               {workspaceView === 'admin'
                 ? currentModuleObj.title
                 : workspaceView === 'pos'
-                ? '12. POS / Kasa Terminali'
+                ? '9. Ödeme, POS & Kasa Terminali'
                 : workspaceView === 'kds'
-                ? '7. Canlı Mutfak Ekranı (KDS)'
+                ? '6. Canlı Mutfak Ekranı (KDS)'
                 : workspaceView === 'waiter'
-                ? '3 & 8. Garson ve Masa Yönetimi'
-                : '4 & 26. QR Menü ve Kurumsal Web'}
+                ? '3 & 7. Garson ve Masa Yönetimi'
+                : '15. Müşteri Web Sitesi & QR'}
             </span>
           </div>
         </div>
@@ -1799,8 +2090,8 @@ export function App() {
         {/* Desktop Collapsible 38-Module Sidebar */}
         {sidebarOpen && (
           <aside
-            aria-label="38 Modüllü Yönetim Menüsü"
-            className="hidden lg:flex flex-col w-68 shrink-0 border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#141413] p-3.5 space-y-3"
+            aria-label="Yönetim Menüsü"
+            className="hidden lg:flex flex-col w-72 shrink-0 border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#141413] p-3 space-y-3"
           >
             <div>
               <input
@@ -1820,18 +2111,19 @@ export function App() {
                   <button
                     key={mod.id}
                     type="button"
+                    title={`${mod.title} · ${mod.group}`}
                     onClick={() => {
                       setWorkspaceView('admin');
                       setActiveModuleId(mod.id);
                     }}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between ${
+                    className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 ${
                       isSelected
                         ? 'bg-[#B86B35] text-white font-semibold'
                         : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-[#1F1F1D]'
                     }`}
                   >
-                    <span className="truncate">{mod.title}</span>
-                    <span className="text-[10px] opacity-65 shrink-0 ml-2">{mod.group}</span>
+                    <span className="leading-snug">{mod.title}</span>
+                    <span className="text-[9px] opacity-60 shrink-0">{mod.group}</span>
                   </button>
                 );
               })}
@@ -1881,7 +2173,7 @@ export function App() {
         <main className="flex-1 p-3 sm:p-6 max-w-[1440px] mx-auto w-full min-w-0 overflow-x-hidden space-y-6">
           {/* Role Access Notice if non-admin role tries restricted administrative settings */}
           {workspaceView === 'admin' &&
-            activeModuleId >= 34 &&
+            activeModuleId >= 35 &&
             currentRole !== 'Süper Yönetici' &&
             currentRole !== 'İşletme Müdürü' && (
               <div className="rounded-xl border border-amber-700/40 bg-amber-950/20 p-4 text-xs flex items-center justify-between">
@@ -1933,6 +2225,7 @@ export function App() {
               categories={categories}
               tables={tables}
               orders={orders}
+              staff={staff}
               isOnline={isOnline}
               siteCmsConfig={siteCmsConfig}
               onCreatePosOrder={handleCreatePosOrder}
@@ -2022,25 +2315,6 @@ export function App() {
                   prev.map((t) => (t.id === tableId ? { ...t, status } : t))
                 );
                 recordAudit('Masalar', 'Masa Durum Güncelleme', `${tableId} -> ${status}`);
-              }}
-              onRotateQrToken={(tableId, revokeOnly) => {
-                const newToken = `OZT-QR-${Math.random().toString(16).slice(2, 10).toUpperCase()}`;
-                setTables((prev) =>
-                  prev.map((t) =>
-                    t.id === tableId
-                      ? {
-                          ...t,
-                          qrToken: revokeOnly ? t.qrToken : newToken,
-                          qrRevoked: revokeOnly,
-                        }
-                      : t
-                  )
-                );
-                recordAudit(
-                  'QR Güvenliği',
-                  revokeOnly ? 'QR Token İptali' : 'QR Token Yenileme',
-                  `Masa ${tableId} için QR token güncellendi.`
-                );
               }}
               onClearTableAlerts={(tableId) => {
                 setTables((prev) =>
@@ -2200,6 +2474,69 @@ export function App() {
                 );
                 recordAudit('Masalar', 'Masa Durum Güncelleme', `${tableId} -> ${status}`);
               }}
+              onAddTable={(tbl) => {
+                const check = validateTableCandidate(tbl, tables);
+                if (!check.valid) {
+                  return { success: false, message: check.error || 'Geçersiz masa bilgisi.' };
+                }
+                const newTable: DiningTableItem = {
+                  id: `TBL-${Date.now().toString().slice(-4)}`,
+                  number: tbl.number.trim(),
+                  area: tbl.area.trim() || 'Ana Salon',
+                  capacity: tbl.capacity,
+                  status: 'Boş',
+                  waiterName: tbl.waiterName.trim() || 'Murat Demir',
+                  qrCodeNumber: tbl.qrCodeNumber.trim().toUpperCase(),
+                  qrToken: `OZT-QR-${Math.random().toString(16).slice(2, 10).toUpperCase()}`,
+                  qrRevoked: false,
+                  openBalance: 0,
+                  currentOrderId: null,
+                  mergedWith: null,
+                  waiterCalled: false,
+                  billRequested: false,
+                  activeServiceRequests: [],
+                };
+                setTables((prev) => [...prev, newTable]);
+                recordAudit('Masalar', 'Yeni Masa Eklendi', `${newTable.number} (${newTable.qrCodeNumber})`);
+                return { success: true, message: `${newTable.number} başarıyla eklendi.` };
+              }}
+              onUpdateTable={(updatedTable) => {
+                const check = validateTableCandidate(updatedTable, tables, updatedTable.id);
+                if (!check.valid) {
+                  return { success: false, message: check.error || 'Masa bilgileri güncellenemedi.' };
+                }
+                setTables((prev) =>
+                  prev.map((t) =>
+                    t.id === updatedTable.id
+                      ? {
+                          ...t,
+                          number: updatedTable.number.trim(),
+                          area: updatedTable.area.trim() || 'Ana Salon',
+                          capacity: updatedTable.capacity,
+                          waiterName: updatedTable.waiterName.trim(),
+                          qrCodeNumber: updatedTable.qrCodeNumber.trim().toUpperCase(),
+                        }
+                      : t
+                  )
+                );
+                recordAudit('Masalar', 'Masa Düzenlendi', `${updatedTable.number} (${updatedTable.qrCodeNumber}) güncellendi.`);
+                return { success: true, message: `${updatedTable.number} güncellendi.` };
+              }}
+              onDeleteTable={(tableId) => {
+                const target = tables.find((t) => t.id === tableId);
+                if (!target) {
+                  return { success: false, message: 'Masa bulunamadı.' };
+                }
+                if (target.openBalance > 0) {
+                  return {
+                    success: false,
+                    message: `${target.number} masasında ${target.openBalance.toFixed(2)} ₺ açık adisyon bulunduğu için silinemez. Önce POS kasadan hesabı kapatın.`,
+                  };
+                }
+                setTables((prev) => prev.filter((t) => t.id !== tableId));
+                recordAudit('Masalar', 'Masa Silindi', `${target.number} (${target.qrCodeNumber}) silindi.`, 'Uyarı');
+                return { success: true, message: `${target.number} silindi.` };
+              }}
               stocks={stocks}
               stockMovements={stockMovements}
               onRecordStockOperation={(payload) => {
@@ -2244,15 +2581,23 @@ export function App() {
                 setCustomers((prev) => [
                   {
                     ...c,
-                    id: `CUS-${prev.length + 1}`,
-                    points: 50,
-                    walletBalance: 0,
+                    id: `CUS-${Date.now().toString().slice(-4)}`,
+                    points: c.points ?? 50,
+                    walletBalance: c.walletBalance ?? 0,
                     totalOrders: 0,
                     totalSpent: 0,
                   },
                   ...prev,
                 ]);
-                recordAudit('Müşteriler (CRM)', 'Yeni Müşteri', `${c.name} kaydedildi.`);
+                recordAudit('Üye Yönetimi', 'Yeni Üye', `${c.name} kaydedildi.`);
+              }}
+              onUpdateCustomer={(updated) => {
+                setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+                recordAudit('Üye Yönetimi', 'Üye Güncellendi', `${updated.name} bilgileri güncellendi.`);
+              }}
+              onDeleteCustomer={(id) => {
+                setCustomers((prev) => prev.filter((c) => c.id !== id));
+                recordAudit('Üye Yönetimi', 'Üye Silindi', `${id} kaydı kaldırıldı.`, 'Uyarı');
               }}
               onAdjustLoyaltyPoints={(customerId, delta, reason) => {
                 setCustomers((prev) =>
@@ -2265,10 +2610,18 @@ export function App() {
               campaigns={campaigns}
               onAddCampaign={(c) => {
                 setCampaigns((prev) => [
-                  { ...c, id: `CMP-${prev.length + 1}`, usedCount: 0 },
+                  { ...c, id: `CMP-${Date.now().toString().slice(-4)}`, usedCount: 0 },
                   ...prev,
                 ]);
                 recordAudit('Kampanyalar', 'Yeni Kampanya', `${c.name} (${c.couponCode}) tanımlandı.`);
+              }}
+              onUpdateCampaign={(updated) => {
+                setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+                recordAudit('Kampanyalar', 'Kampanya Güncellendi', `${updated.name} (${updated.couponCode}) güncellendi.`);
+              }}
+              onDeleteCampaign={(campaignId) => {
+                setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
+                recordAudit('Kampanyalar', 'Kampanya Silindi', `${campaignId} kampanyası silindi.`, 'Uyarı');
               }}
               reservations={reservations}
               onUpdateReservationStatus={(resId, status) => {
@@ -2277,19 +2630,18 @@ export function App() {
                 );
                 recordAudit('Rezervasyonlar', 'Durum Güncelleme', `${resId} -> ${status}`);
               }}
-              staff={staff}
-              onAddStaff={(s) => {
-                setStaff((prev) => [
-                  ...prev,
-                  {
-                    ...s,
-                    id: `STF-${prev.length + 1}`,
-                    ordersHandledToday: 0,
-                    salesToday: 0,
-                  },
-                ]);
-                recordAudit('Personel', 'Yeni Personel', `${s.name} (${s.role}) eklendi.`);
+              onAddReservation={(candidate) => handleCreateReservationShared(candidate)}
+              onUpdateReservation={(updated) => {
+                setReservations((prev) =>
+                  prev.map((r) => (r.id === updated.id ? updated : r))
+                );
+                recordAudit('Rezervasyonlar', 'Rezervasyon Güncellendi', `${updated.customerName} (${updated.date} ${updated.time}) güncellendi.`);
               }}
+              onDeleteReservation={(resId) => {
+                setReservations((prev) => prev.filter((r) => r.id !== resId));
+                recordAudit('Rezervasyonlar', 'Rezervasyon Silindi', `${resId} silindi.`, 'Uyarı');
+              }}
+              staff={staff}
               financeLedger={financeLedger}
               onAddFinanceEntry={(entry) => {
                 setFinanceLedger((prev) => [
@@ -2343,27 +2695,60 @@ export function App() {
                   )
                 );
               }}
-              onUpdateIntegration={(updated) => {
+              onUpdateIntegration={(updatedIntg) => {
                 setIntegrations((prev) =>
-                  prev.map((i) => (i.id === updated.id ? updated : i))
+                  prev.map((i) => (i.id === updatedIntg.id ? updatedIntg : i))
                 );
-                recordAudit('Entegrasyonlar', 'Gelişmiş Yapılandırma', `${updated.name} API ayarları güncellendi.`);
+                recordAudit(
+                  'Entegrasyonlar',
+                  'Eklenti Ayarları Güncellendi',
+                  `${updatedIntg.name} (${updatedIntg.mode}) ayarları kaydedildi.`
+                );
               }}
-              onToggleIntegrationActive={(id) => {
-                setIntegrations((prev) =>
-                  prev.map((i) => {
-                    if (i.id === id) {
-                      const next = !i.enabled;
-                      recordAudit(
-                        'Entegrasyonlar',
-                        next ? 'Entegrasyon Açıldı' : 'Entegrasyon Kapatıldı',
-                        `${i.name} durumu ${next ? 'Aktif' : 'Pasif'} yapıldı.`
-                      );
-                      return { ...i, enabled: next };
-                    }
-                    return i;
-                  })
+              onAddIntegration={(newIntg) => {
+                setIntegrations((prev) => [
+                  ...prev,
+                  {
+                    ...newIntg,
+                    id: `INT-${Date.now().toString().slice(-4)}`,
+                    lastTested: 'Henüz test edilmedi',
+                  },
+                ]);
+                recordAudit('Entegrasyonlar', 'Yeni Eklenti Eklendi', `${newIntg.name} sisteme eklendi.`);
+              }}
+              onDeleteIntegration={(id) => {
+                setIntegrations((prev) => prev.filter((i) => i.id !== id));
+                recordAudit('Entegrasyonlar', 'Eklenti Silindi', `${id} eklentisi kaldırıldı.`, 'Uyarı');
+              }}
+              archiveHistory={archiveHistory}
+              onArchiveDaySummary={(reason) => {
+                const validOrders = orders.filter((o) => o.status !== 'İptal edildi');
+                const totalRev = roundCurrency(validOrders.reduce((s, o) => s + o.totalAmount, 0));
+                const cashRev = roundCurrency(
+                  validOrders
+                    .filter((o) => /nakit/i.test(o.paymentMethod || ''))
+                    .reduce((s, o) => s + o.totalAmount, 0)
                 );
+                const cardRev = roundCurrency(totalRev - cashRev);
+                const todayKey = new Date().toISOString().slice(0, 10);
+                const entry = buildArchiveEntry({
+                  type: 'Gün Sonu Özeti',
+                  title: `Gün Sonu Z-Raporu (${todayKey})`,
+                  subtitle: `${validOrders.length} Sipariş · Nakit: ${cashRev.toFixed(0)} ₺ · Kart/Online: ${cardRev.toFixed(0)} ₺`,
+                  amount: totalRev,
+                  reason: reason?.trim() || 'Yönetici tarafından gün sonu Z-Raporu arşivlendi',
+                  dateKey: todayKey,
+                  archivedAt: `${todayKey} ${new Date().toLocaleTimeString('tr-TR', { hour12: false })}`,
+                });
+                setArchiveHistory((prev) => [entry, ...prev]);
+                recordAudit('Gün Sonu Arşivi', 'Z-Raporu Arşivlendi', `${entry.title} - ${totalRev.toFixed(2)} ₺`);
+              }}
+              onDeleteArchiveEntry={(id) => {
+                setArchiveHistory((prev) => prev.filter((a) => a.id !== id));
+              }}
+              onClearArchiveHistory={() => {
+                setArchiveHistory([]);
+                recordAudit('Gün Sonu Arşivi', 'Arşiv Temizlendi', 'Geçmiş gün sonu arşiv kayıtları temizlendi.', 'Uyarı');
               }}
               branches={branches}
               onToggleBranchActive={(id) => {
@@ -2472,122 +2857,18 @@ export function App() {
               waiterCalls={waiterCalls}
               onDispatchWaiterCall={handleDispatchWaiterCall}
               onResolveWaiterCall={handleResolveWaiterCallShared}
+              onDeleteWaiterCall={(callId) => {
+                setWaiterCalls((prev) => prev.filter((c) => c.id !== callId));
+                recordAudit('Garson Çağrıları', 'Garson Çağrısı Silindi', `${callId} kaydı silindi.`, 'Uyarı');
+              }}
+              onClearCompletedWaiterCalls={() => {
+                setWaiterCalls((prev) => prev.filter((c) => c.status !== 'Tamamlandı'));
+                recordAudit('Garson Çağrıları', 'Tamamlanan Çağrılar Temizlendi', 'Tamamlanmış tüm garson çağrıları temizlendi.');
+              }}
               onAssignOrderCourier={handleAssignOrderCourier}
               onUpdateCourierDeliveryState={handleUpdateCourierDeliveryState}
               onSettleOrderPayment={handleSettleOrderPayment}
               onIssueOrderReceiptAndInvoice={handleIssueOrderReceiptAndInvoice}
-              onDeleteOrder={(orderId) => {
-                const target = orders.find((o) => o.id === orderId);
-                setOrders((prev) => prev.filter((o) => o.id !== orderId));
-                recordAudit(
-                  'Sipariş Yönetimi',
-                  'Sipariş Kaydı Silindi',
-                  `${target?.orderNumber || orderId} silindi ve arşivde saklanıyor.`
-                );
-              }}
-              onDeleteWaiterCall={(callId) => {
-                setWaiterCalls((prev) => prev.filter((c) => c.id !== callId));
-                recordAudit('Garson Servisi', 'Çağrı Silindi', `${callId} çağrı kaydı silindi.`);
-              }}
-              onAddTable={(tblData) => {
-                const newId = `TBL-${String(tables.length + 1).padStart(2, '0')}`;
-                const newTbl: DiningTableItem = {
-                  ...tblData,
-                  id: newId,
-                  qrToken: `token-${newId.toLowerCase()}-${Date.now().toString(36)}`,
-                  qrRevoked: false,
-                  openBalance: 0,
-                  billRequested: false,
-                  waiterCalled: false,
-                  activeServiceRequests: [],
-                };
-                setTables((prev) => [...prev, newTbl]);
-                recordAudit('Masalar', 'Yeni Masa Eklendi', `${newTbl.number} (${newTbl.area}) eklendi.`);
-              }}
-              onUpdateTable={(updatedTable) => {
-                setTables((prev) => prev.map((t) => (t.id === updatedTable.id ? updatedTable : t)));
-                recordAudit('Masalar', 'Masa Güncellendi', `${updatedTable.number} güncellendi.`);
-              }}
-              onDeleteTable={(tableId) => {
-                const target = tables.find((t) => t.id === tableId);
-                setTables((prev) => prev.filter((t) => t.id !== tableId));
-                recordAudit('Masalar', 'Masa Silindi', `${target?.number || tableId} kaldırıldı.`, 'Uyarı');
-              }}
-              onResetTableBill={(tableId) => {
-                setTables((prev) =>
-                  prev.map((t) =>
-                    t.id === tableId
-                      ? {
-                          ...t,
-                          openBalance: 0,
-                          billRequested: false,
-                          status: 'Boş',
-                          activeServiceRequests: [],
-                          serviceRequestNote: undefined,
-                        }
-                      : t
-                  )
-                );
-                recordAudit('Masalar', 'Masa Hesabı Sıfırlandı', `${tableId} açık hesabı kapatıldı.`);
-              }}
-              onAddStockItem={(item) => {
-                const newStock: StockItem = {
-                  ...item,
-                  id: `ING-${String(stocks.length + 1).padStart(2, '0')}`,
-                };
-                setStocks((prev) => [...prev, newStock]);
-                recordAudit('Stok Yönetimi', 'Yeni Stok Kalemi', `${newStock.name} eklendi.`);
-              }}
-              onUpdateStockItem={(updated) => {
-                setStocks((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-                recordAudit('Stok Yönetimi', 'Stok Güncellendi', `${updated.name} güncellendi.`);
-              }}
-              onDeleteStockItem={(id) => {
-                const target = stocks.find((s) => s.id === id);
-                setStocks((prev) => prev.filter((s) => s.id !== id));
-                recordAudit('Stok Yönetimi', 'Stok Silindi', `${target?.name || id} silindi.`, 'Uyarı');
-              }}
-              onUpdateReservation={(res) => {
-                setReservations((prev) => prev.map((r) => (r.id === res.id ? res : r)));
-                recordAudit('Rezervasyonlar', 'Rezervasyon Güncellendi', `${res.customerName} rezervasyonu güncellendi.`);
-              }}
-              onDeleteReservation={(id) => {
-                const target = reservations.find((r) => r.id === id);
-                setReservations((prev) => prev.filter((r) => r.id !== id));
-                recordAudit('Rezervasyonlar', 'Rezervasyon Silindi', `${target?.customerName || id} rezervasyonu silindi.`);
-              }}
-              onUpdateCustomer={(cust) => {
-                setCustomers((prev) => prev.map((c) => (c.id === cust.id ? cust : c)));
-                recordAudit('Müşteriler', 'Müşteri Güncellendi', `${cust.name} güncellendi.`);
-              }}
-              onDeleteCustomer={(id) => {
-                const target = customers.find((c) => c.id === id);
-                setCustomers((prev) => prev.filter((c) => c.id !== id));
-                recordAudit('Müşteriler', 'Müşteri Silindi', `${target?.name || id} silindi.`);
-              }}
-              onToggleCustomerBlock={(id) => {
-                setCustomers((prev) =>
-                  prev.map((c) => {
-                    if (c.id !== id) return c;
-                    const willBlock = !c.isBlocked;
-                    recordAudit(
-                      'Müşteriler',
-                      willBlock ? 'Müşteri Engellendi' : 'Müşteri Engeli Kaldırıldı',
-                      `${c.name} (${c.phone}) ${willBlock ? 'engellendi' : 'engeli kaldırıldı'}.`
-                    );
-                    return { ...c, isBlocked: willBlock };
-                  })
-                );
-              }}
-              onUpdateCampaign={(camp) => {
-                setCampaigns((prev) => prev.map((c) => (c.id === camp.id ? camp : c)));
-                recordAudit('Kampanyalar', 'Kampanya Güncellendi', `${camp.name} güncellendi.`);
-              }}
-              onDeleteCampaign={(id) => {
-                const target = campaigns.find((c) => c.id === id);
-                setCampaigns((prev) => prev.filter((c) => c.id !== id));
-                recordAudit('Kampanyalar', 'Kampanya Silindi', `${target?.name || id} silindi.`);
-              }}
             />
           )}
         </main>

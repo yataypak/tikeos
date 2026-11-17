@@ -1,9 +1,50 @@
 import React, { useEffect, useState } from 'react';
 import { Download, Smartphone, WifiOff, Share2, X, Monitor, Apple, CheckCircle2 } from 'lucide-react';
+import type { ResolvedThemeTokens } from '../core/restaurantEngine';
+import type { SiteCmsConfig } from '../data/siteCmsStore';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
+// Module-level PWA prompt store so switching views (Customer <-> Admin <-> POS)
+// never drops an early `beforeinstallprompt` event fired on initial page load.
+let globalDeferredPrompt: BeforeInstallPromptEvent | null = null;
+let globalAppInstalled = false;
+const pwaListeners = new Set<() => void>();
+let globalListenersAttached = false;
+
+function notifyPwaSubscribers() {
+  pwaListeners.forEach((cb) => cb());
+}
+
+function ensureGlobalPwaListeners() {
+  if (globalListenersAttached || typeof window === 'undefined') return;
+  globalListenersAttached = true;
+
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+  if (isStandalone) {
+    globalAppInstalled = true;
+  }
+
+  window.addEventListener('beforeinstallprompt', (e: Event) => {
+    e.preventDefault();
+    globalDeferredPrompt = e as BeforeInstallPromptEvent;
+    notifyPwaSubscribers();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    globalAppInstalled = true;
+    globalDeferredPrompt = null;
+    notifyPwaSubscribers();
+  });
+}
+
+if (typeof window !== 'undefined') {
+  ensureGlobalPwaListeners();
 }
 
 export function useOnlineStatus() {
@@ -28,64 +69,63 @@ export function useOnlineStatus() {
 }
 
 export function usePWAInstall() {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+  const [, setTick] = useState(0);
   const [isIOS, setIsIOS] = useState(false);
+  const [hasServiceWorkerSupport, setHasServiceWorkerSupport] = useState(false);
 
   useEffect(() => {
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-    setIsInstalled(isStandalone);
+    ensureGlobalPwaListeners();
+    const bump = () => setTick((t) => t + 1);
+    pwaListeners.add(bump);
 
     const userAgent = window.navigator.userAgent.toLowerCase();
-    const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
-    setIsIOS(isIOSDevice);
-
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-    };
-
-    const handleAppInstalled = () => {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
+    setIsIOS(/iphone|ipad|ipod/.test(userAgent));
+    setHasServiceWorkerSupport('serviceWorker' in window.navigator);
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
+      pwaListeners.delete(bump);
     };
   }, []);
 
   const install = async () => {
-    if (!deferredPrompt) return false;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
+    if (!globalDeferredPrompt) return false;
+    await globalDeferredPrompt.prompt();
+    const { outcome } = await globalDeferredPrompt.userChoice;
     if (outcome === 'accepted') {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
+      globalAppInstalled = true;
+      globalDeferredPrompt = null;
+      notifyPwaSubscribers();
       return true;
     }
     return false;
   };
 
   return {
-    isInstallable: !!deferredPrompt,
-    isInstalled,
+    isInstallable: !!globalDeferredPrompt,
+    isInstalled: globalAppInstalled,
     isIOS,
+    hasServiceWorkerSupport,
     install,
   };
 }
 
-export const PWAInstallButton: React.FC = () => {
+export const PWAInstallButton: React.FC<{
+  label?: string;
+  themeTokens?: ResolvedThemeTokens;
+  compact?: boolean;
+}> = ({ label = 'Uygulamayı Yükle (PWA)', themeTokens, compact = false }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showModal, setShowModal] = useState(false);
 
   if (isInstalled) return null;
+
+  const btnStyle: React.CSSProperties | undefined = themeTokens
+    ? {
+        borderColor: themeTokens.borderColor,
+        backgroundColor: themeTokens.surfaceAltColor,
+        color: themeTokens.textPrimary,
+      }
+    : undefined;
 
   return (
     <>
@@ -98,11 +138,17 @@ export const PWAInstallButton: React.FC = () => {
             setShowModal(true);
           }
         }}
-        className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-[#D4AF6A]/40 bg-[#1F1F1D] text-[#F5F2EB] hover:bg-[#2A2A27] transition-colors whitespace-nowrap shrink-0"
+        style={btnStyle}
+        className={`inline-flex items-center gap-1.5 ${
+          compact ? 'px-2.5 py-1.5 text-[11px]' : 'px-3 py-1.5 text-xs'
+        } font-medium rounded-lg border border-[#D4AF6A]/40 bg-[#1F1F1D] text-[#F5F2EB] hover:brightness-110 transition-all whitespace-nowrap shrink-0 cursor-pointer`}
         aria-label="PWA Uygulamasını Cihaza Yükle"
       >
-        <Smartphone className="w-3.5 h-3.5 text-[#D4AF6A]" />
-        <span>Uygulamayı Yükle (PWA)</span>
+        <Smartphone
+          className="w-3.5 h-3.5 shrink-0"
+          style={themeTokens ? { color: themeTokens.primaryColor } : { color: '#D4AF6A' }}
+        />
+        <span>{label}</span>
       </button>
 
       {showModal && (
@@ -120,7 +166,7 @@ export const PWAInstallButton: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowModal(false)}
-                className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
                 aria-label="Kurulum penceresini kapat"
               >
                 <X className="w-4 h-4" />
@@ -143,14 +189,14 @@ export const PWAInstallButton: React.FC = () => {
                 </p>
               )}
               <div className="p-3 rounded-lg bg-neutral-100 dark:bg-[#141413] text-xs text-neutral-600 dark:text-neutral-400">
-                Bölüm 27 Güvenlik Kuralı: Çevrimdışı durumda önbellekteki menü ve ekranlar görüntülenebilir; ancak çevrimdışı modda ödeme başarılı gösterilmez ve mükerrer sipariş engellenir.
+                Çevrimdışı durumda önbellekteki menü ve ekranlar görüntülenebilir; ancak çevrimdışı modda ödeme başarılı gösterilmez ve mükerrer sipariş engellenir.
               </div>
             </div>
             <div className="mt-5 flex justify-end">
               <button
                 type="button"
                 onClick={() => setShowModal(false)}
-                className="px-4 py-2 text-xs font-medium rounded-lg bg-[#B86B35] text-white hover:bg-[#9F5928] transition-colors"
+                className="px-4 py-2 text-xs font-medium rounded-lg bg-[#B86B35] text-white hover:bg-[#9F5928] transition-colors cursor-pointer"
               >
                 Anladım
               </button>
@@ -167,15 +213,35 @@ export const FooterPWACard: React.FC<{
   description: string;
   buttonLabel: string;
   installedLabel: string;
-}> = ({ title, description, buttonLabel, installedLabel }) => {
+  pwaSettings?: SiteCmsConfig['pwaSettings'];
+  themeTokens?: ResolvedThemeTokens;
+}> = ({ title, description, buttonLabel, installedLabel, pwaSettings, themeTokens }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const isOnline = useOnlineStatus();
   const [guideOpen, setGuideOpen] = useState(false);
   const [downloadConfirm, setDownloadConfirm] = useState<string | null>(null);
   const [platformTab, setPlatformTab] = useState<'ios' | 'android' | 'pc'>(
     isIOS ? 'ios' : 'android'
   );
+
+  if (pwaSettings && !pwaSettings.enabled) return null;
+
   const isEmbeddedIframe =
     typeof window !== 'undefined' && window.self !== window.top;
+  const appIconSrc = pwaSettings?.iconUrl || '/assets/aistudio/oztike-logo-transparent.png';
+  const resolvedTitle = pwaSettings?.appName || title;
+  const resolvedBtnLabel = pwaSettings?.installButtonLabelTr || buttonLabel;
+  const resolvedDescription = !isOnline
+    ? pwaSettings?.offlineTextTr || description
+    : pwaSettings?.description || description;
+
+  const cardStyle: React.CSSProperties = themeTokens
+    ? {
+        backgroundColor: themeTokens.surfaceColor,
+        borderColor: themeTokens.borderColor,
+        color: themeTokens.textPrimary,
+      }
+    : {};
 
   const handleTriggerInstall = async () => {
     if (isInstallable) {
@@ -195,13 +261,13 @@ export const FooterPWACard: React.FC<{
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ÖzTike Ciğer · Halil Usta</title>
+  <title>${resolvedTitle}</title>
   <meta http-equiv="refresh" content="0;url=${targetUrl}" />
   <style>body{background:#120806;color:#F6D79E;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;margin:0}a{color:#D4A359;font-weight:bold}</style>
 </head>
 <body>
   <div>
-    <h2>ÖzTike Ciğer · Halil Usta</h2>
+    <h2>${resolvedTitle}</h2>
     <p>Uygulama başlatılıyor... Açılmazsa <a href="${targetUrl}">buraya dokunun</a>.</p>
   </div>
 </body>
@@ -219,29 +285,61 @@ export const FooterPWACard: React.FC<{
   };
 
   return (
-    <div className="rounded-2xl border border-[#D4A359]/35 bg-gradient-to-r from-[#1E0E0A] via-[#27120D] to-[#1A0B08] p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+    <div
+      style={cardStyle}
+      className={`${
+        themeTokens ? themeTokens.cardRadius : 'rounded-2xl'
+      } border border-[#D4A359]/35 bg-[#1E0E0A] p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4`}
+    >
       <div className="flex items-start gap-3 min-w-0">
         <img
-          src="/assets/aistudio/oztike-logo-transparent.png"
-          alt="ÖzTike Ciğer Uygulama Logosu"
+          src={appIconSrc}
+          alt={resolvedTitle}
+          style={
+            themeTokens
+              ? {
+                  borderColor: themeTokens.borderColor,
+                  backgroundColor: themeTokens.backgroundColor,
+                }
+              : undefined
+          }
           className="w-12 h-12 rounded-xl border border-[#D4A359]/45 object-contain p-1 shrink-0 bg-[#120806]"
         />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="font-editorial text-sm sm:text-base font-bold text-[#F6D79E]">
-              {title}
+            <h4
+              className="font-editorial text-sm sm:text-base font-bold"
+              style={{ color: themeTokens ? themeTokens.textPrimary : '#F6D79E' }}
+            >
+              {resolvedTitle}
             </h4>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-bold text-emerald-300">
+            <span
+              style={
+                themeTokens?.isLight
+                  ? {
+                      backgroundColor: 'rgba(16, 185, 129, 0.14)',
+                      borderColor: 'rgba(5, 150, 105, 0.35)',
+                      color: '#065F46',
+                    }
+                  : undefined
+              }
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-bold text-emerald-300"
+            >
               iOS · Android · PC
             </span>
           </div>
-          <p className="text-xs text-[#DECAB4] mt-1 leading-relaxed">{description}</p>
+          <p
+            className="text-xs mt-1 leading-relaxed"
+            style={{ color: themeTokens ? themeTokens.textSecondary : '#DECAB4' }}
+          >
+            {resolvedDescription}
+          </p>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 shrink-0 w-full md:w-auto">
         {isInstalled ? (
-          <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
+          <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span>{installedLabel}</span>
           </div>
@@ -250,10 +348,20 @@ export const FooterPWACard: React.FC<{
             type="button"
             onClick={handleTriggerInstall}
             data-testid="pwa-footer-install-btn"
-            className="w-full md:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] font-extrabold text-xs shadow-lg hover:brightness-110 transition-all cursor-pointer"
+            style={
+              themeTokens
+                ? {
+                    backgroundImage: `linear-gradient(to right, ${themeTokens.primaryColor}, ${themeTokens.secondaryColor})`,
+                    color: themeTokens.ctaTextColor,
+                  }
+                : undefined
+            }
+            className={`w-full md:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 ${
+              themeTokens ? themeTokens.buttonRadius : 'rounded-xl'
+            } bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] font-extrabold text-xs shadow-lg hover:brightness-110 transition-all cursor-pointer`}
           >
             <Download className="w-4 h-4 shrink-0" />
-            <span>{buttonLabel}</span>
+            <span>{resolvedBtnLabel}</span>
           </button>
         )}
       </div>
@@ -269,12 +377,12 @@ export const FooterPWACard: React.FC<{
             <div className="flex items-center justify-between border-b border-[#D4A359]/20 pb-3">
               <div className="flex items-center gap-2.5">
                 <img
-                  src="/assets/aistudio/oztike-logo-transparent.png"
-                  alt="ÖzTike Ciğer Logo"
+                  src={appIconSrc}
+                  alt={resolvedTitle}
                   className="w-9 h-9 rounded-lg border border-[#D4A359]/40 object-contain p-0.5 bg-[#120806]"
                 />
                 <div>
-                  <h3 className="font-bold text-sm sm:text-base text-[#FFF7EB]">{title}</h3>
+                  <h3 className="font-bold text-sm sm:text-base text-[#FFF7EB]">{resolvedTitle}</h3>
                   <p className="text-[11px] text-[#C4AC95]">iOS Safari · Android Chrome · PC Masaüstü</p>
                 </div>
               </div>
@@ -325,6 +433,11 @@ export const FooterPWACard: React.FC<{
               {platformTab === 'ios' && (
                 <>
                   <div className="font-bold text-[#F6D79E]">iOS (iPhone & iPad · Safari) Kurulum Adımları:</div>
+                  {pwaSettings?.iosHintTr && (
+                    <p className="text-[11px] text-[#F6D79E]/90 bg-[#1F0F0B] border border-[#D4A359]/25 rounded-lg px-2.5 py-1.5">
+                      {pwaSettings.iosHintTr}
+                    </p>
+                  )}
                   <ol className="list-decimal list-inside space-y-1.5">
                     <li>Bu sayfayı Safari tarayıcısında tam sayfa olarak açın.</li>
                     <li>
@@ -342,7 +455,7 @@ export const FooterPWACard: React.FC<{
                 <>
                   <div className="font-bold text-[#F6D79E]">Android (Chrome / Samsung Internet) Kurulum Adımları:</div>
                   <ol className="list-decimal list-inside space-y-1.5">
-                    <li>Aşağıdaki &ldquo;Tam Ekranda Aç&rdquo; ile siteyi doğrudan tarayıcı sekmesinde açın.</li>
+                    <li>Aşağıdaki &ldquo;Önizleme Dışında Tam Sayfada Aç&rdquo; ile siteyi doğrudan tarayıcı sekmesinde açın.</li>
                     <li>Tarayıcı sağ üst köşesindeki <strong className="text-white">⋮ (Üç Nokta)</strong> menüsüne dokunun.</li>
                     <li><strong className="text-white">“Uygulamayı Yükle”</strong> veya <strong className="text-white">“Ana Ekrana Ekle”</strong> seçeneğini seçin.</li>
                     <li>Açılan onay penceresinde <strong className="text-white">Yükle</strong> butonuna basın.</li>
@@ -355,7 +468,7 @@ export const FooterPWACard: React.FC<{
                   <div className="font-bold text-[#F6D79E]">Bilgisayar (Windows / macOS · Chrome & Edge) Kurulumu:</div>
                   <ol className="list-decimal list-inside space-y-1.5">
                     <li>Tarayıcı adres çubuğunun sağındaki <strong className="text-white">Bilgisayar / İndir (Yükle)</strong> ikonuna tıklayın.</li>
-                    <li>Alternatif olarak tarayıcı menüsünden <strong className="text-white">ÖzTike Ciğer’i Yükle</strong> seçeneğine basın.</li>
+                    <li>Alternatif olarak tarayıcı menüsünden <strong className="text-white">{resolvedTitle} Yükle</strong> seçeneğine basın.</li>
                     <li>Veya aşağıdaki Hızlı Başlatıcı Kısayol dosyasını indirip masaüstünüzden tek tıkla açın.</li>
                   </ol>
                 </>
@@ -556,7 +669,7 @@ export const BrandIdentityShowcase: React.FC<{
                 <button
                   type="button"
                   onClick={() => onDownloadAsset(item.title)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>SVG İndir</span>

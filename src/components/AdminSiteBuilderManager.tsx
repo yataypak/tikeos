@@ -27,7 +27,13 @@ import {
   Truck,
   Building2,
   Eye,
-  Upload,
+  CheckCircle2,
+  AlertCircle,
+  Grid,
+  MousePointerClick,
+  Video,
+  Code2,
+  Search,
 } from 'lucide-react';
 import {
   INITIAL_SITE_CMS_CONFIG,
@@ -41,26 +47,43 @@ import {
   type LogoPresetItem,
   type ShowcaseCardItem,
 } from '../data/siteCmsStore';
-import type { CMSPageItem } from '../data/initialStoreData';
+import type { CMSPageItem, CategoryItem } from '../data/initialStoreData';
 import { SUPPORTED_LANGUAGES, type SupportedLang } from '../i18n/translations';
+import {
+  THEME_PRESETS,
+  type ThemeVariantId,
+  calculateSeoHealthScore,
+  buildRestaurantJsonLd,
+  buildFullSitemapXml,
+  buildRobotsTxt,
+} from '../core/restaurantEngine';
 
 export type SiteBuilderTabId =
-  | 'announcement_header_logo'
+  | 'announcement_popup'
+  | 'design_studio'
   | 'menus_pages'
-  | 'slider_cards_blocks_theme'
   | 'gallery_only'
-  | 'social_footer'
   | 'seo_only'
   | 'modules_only'
   | 'general_only'
-  | 'gallery_social_footer'
   | 'seo_modules_general';
+
+export type DesignSubTabId =
+  | 'theme_colors'
+  | 'logo_header'
+  | 'navbar_menus'
+  | 'slider'
+  | 'blocks'
+  | 'cards_grid'
+  | 'buttons_icons'
+  | 'footer_social';
 
 interface AdminSiteBuilderManagerProps {
   siteCmsConfig: SiteCmsConfig;
   onUpdateSiteCmsConfig: React.Dispatch<React.SetStateAction<SiteCmsConfig>>;
   onNotify: (msg: string) => void;
   cmsPages?: CMSPageItem[];
+  categories?: CategoryItem[];
   onAddCmsPage?: (page: Omit<CMSPageItem, 'id' | 'updatedAt'>) => void;
   onUpdateCmsPage?: (page: CMSPageItem) => void;
   onDeleteCmsPage?: (id: string) => void;
@@ -73,14 +96,17 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
   onUpdateSiteCmsConfig,
   onNotify,
   cmsPages = [],
+  categories = [],
   onAddCmsPage,
   onUpdateCmsPage,
   onDeleteCmsPage,
-  defaultTab = 'announcement_header_logo',
+  defaultTab = 'announcement_popup',
   singleSectionMode = false,
 }) => {
   const [activeTab, setActiveTab] = useState<SiteBuilderTabId>(defaultTab);
+  const [designSubTab, setDesignSubTab] = useState<DesignSubTabId>('theme_colors');
   const [settingsSubTab, setSettingsSubTab] = useState<'business' | 'orders' | 'notifications' | 'security'>('business');
+  const [newKeywordTag, setNewKeywordTag] = useState('');
 
   // Logo Preset Form
   const [logoPresetName, setLogoPresetName] = useState('');
@@ -205,6 +231,9 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
   const [wdgCategory, setWdgCategory] = useState<CustomPluginWidgetItem['category']>('Bileşen');
   const [wdgDesc, setWdgDesc] = useState('');
   const [editingWdgId, setEditingWdgId] = useState<string | null>(null);
+  const [expandedWdgId, setExpandedWdgId] = useState<string | null>(null);
+  const [newWdgParamKey, setNewWdgParamKey] = useState('');
+  const [newWdgParamVal, setNewWdgParamVal] = useState('');
 
   // Logo Preset Ekle
   const handleAddLogoPreset = (e: React.FormEvent) => {
@@ -697,28 +726,26 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
             <Layout className="w-5 h-5 text-[#B86B35] dark:text-[#D4AF6A]" />
             <span>
               {singleSectionMode
-                ? activeTab === 'announcement_header_logo'
-                  ? 'Duyuru Bandı, Logo & Header Ayarları'
+                ? activeTab === 'announcement_popup'
+                  ? 'Duyuru Bandı & Açılır Kapanır Popup Pencere Yönetimi'
+                  : activeTab === 'design_studio'
+                  ? 'Tasarım Stüdyosu (Tema, Logo, Header, Navbar, Slider, Blok, Kart, Grid, Buton, İkon, Footer)'
                   : activeTab === 'menus_pages'
-                  ? 'Menüler, Kurumsal Sayfalar & Canlı İçerik Editörü'
-                  : activeTab === 'slider_cards_blocks_theme'
-                  ? 'Slider, Vitrin Kartları, Bloklar & Tema Ayarları'
+                  ? 'Kurumsal Sayfalar & Canlı İçerik Editörü'
                   : activeTab === 'gallery_only'
                   ? 'Fotoğraf & Video Galeri Yönetimi'
-                  : activeTab === 'social_footer'
-                  ? 'Sosyal Medya, İletişim & Footer Yönetimi'
                   : activeTab === 'seo_only'
-                  ? 'SEO Meta Etiketleri & Schema.org Yönetimi'
+                  ? 'Gelişmiş SEO, SERP, Schema.org JSON-LD & Sitemap Yönetimi'
                   : activeTab === 'modules_only'
-                  ? 'Web Sitesi Modül, Bileşen & Eklenti Yönetimi'
+                  ? 'Vitrin Bileşenleri & Arayüz Widget Yönetimi'
                   : 'Gelişmiş Sistem Genel Ayarları'
-                : 'Web Sitesi CMS, Duyuru Bandı, Tasarım & Sistem Ayarları'}
+                : 'Web Sitesi CMS, Duyuru & Popup, Tasarım Stüdyosu & Sistem Ayarları'}
             </span>
           </h3>
           <p className="text-neutral-500 mt-0.5">
             {singleSectionMode
               ? 'Bu bölüme ait tüm ayarlar tek noktadan yönetilir; yapılan değişiklikler müşteri sitesine anında yansır.'
-              : 'Logo, Header, Footer, Menüler, Sayfalar, Duyuru Bandı, Slider, Kartlar, Bloklar ve Sistem Ayarlarını tek merkezden yönetin.'}
+              : 'Duyuru Bandı, Popup Pencere, Tasarım Stüdyosu, Sayfalar, Galeri, SEO ve Sistem Ayarlarını tek merkezden yönetin.'}
           </p>
         </div>
 
@@ -726,11 +753,11 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
           <div className="flex flex-wrap gap-1.5">
             {(
               [
-                { id: 'announcement_header_logo', label: '1. Duyuru Bandı, Logo & Header' },
-                { id: 'menus_pages', label: '2. Menüler & Sayfalar' },
-                { id: 'slider_cards_blocks_theme', label: '3. Slider, Kart, Blok, Buton & Tema' },
-                { id: 'gallery_social_footer', label: '4. Galeri, Sosyal Medya & Footer' },
-                { id: 'seo_modules_general', label: '5. Genel Ayarlar, SEO & Modüller' },
+                { id: 'announcement_popup', label: '1. Duyuru & Popup' },
+                { id: 'design_studio', label: '2. Tasarım Stüdyosu' },
+                { id: 'menus_pages', label: '3. Sayfalar' },
+                { id: 'gallery_only', label: '4. Galeri' },
+                { id: 'seo_modules_general', label: '5. Genel Ayarlar & SEO' },
               ] as const
             ).map((tab) => (
               <button
@@ -751,9 +778,9 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
       </div>
 
       {/* =====================================================================
-          SEKME 1: DUYURU BANDI + LOGO + HEADER AYARLARI
+          SEKME 1: DUYURU BANDI + AÇILIR KAPANIR POPUP PENCERE DUYURUSU
       ===================================================================== */}
-      {activeTab === 'announcement_header_logo' && (
+      {activeTab === 'announcement_popup' && (
         <div className="space-y-6">
           {/* Duyuru Bandı Yönetimi + Canlı Önizleme */}
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
@@ -950,302 +977,357 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
             </div>
           </div>
 
-          {/* Logo Yönetimi (Ekle / Seç / Sil) */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <ImageIcon className="w-4 h-4" />
-              <span>Logo Yönetimi (Logo Yükle / Değiştir / Boyutlandır)</span>
-            </div>
+          {/* Açılır Kapanır Popup Pencere Duyurusu Stüdyosu */}
+          {(() => {
+            const pop = siteCmsConfig.promoPopup;
+            const updatePop = (patch: Partial<SiteCmsConfig['promoPopup']>) =>
+              onUpdateSiteCmsConfig((prev) => ({
+                ...prev,
+                promoPopup: { ...prev.promoPopup, ...patch },
+              }));
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-neutral-900 border border-neutral-800">
-                <img
-                  src={siteCmsConfig.header.logoUrl}
-                  alt="Aktif Logo"
-                  style={{ height: `${siteCmsConfig.header.logoHeightPx}px` }}
-                  className="w-auto object-contain"
-                />
-                <div>
-                  <div className="text-white font-bold text-xs">{siteCmsConfig.header.brandTitle}</div>
-                  <div className="text-[10px] text-amber-300">Aktif Logo ({siteCmsConfig.header.logoHeightPx}px)</div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-1">Aktif Logo URL</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.header.logoUrl}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, logoUrl: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-1">
-                  Logo Yüksekliği ({siteCmsConfig.header.logoHeightPx} px) & Favicon
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={28}
-                    max={72}
-                    value={siteCmsConfig.header.logoHeightPx}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        header: { ...prev.header, logoHeightPx: Number(e.target.value) },
-                      }))
-                    }
-                    className="w-28"
-                  />
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={siteCmsConfig.header.faviconUrl}
-                      onChange={(e) =>
-                        onUpdateSiteCmsConfig((prev) => ({
-                          ...prev,
-                          header: { ...prev.header, faviconUrl: e.target.value },
-                        }))
-                      }
-                      placeholder="Favicon URL"
-                      className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono text-[11px]"
-                    />
-                    <label className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[11px] font-semibold cursor-pointer inline-flex items-center gap-1">
-                      <Upload className="w-3 h-3" /> Favicon Yükle
+            return (
+              <div
+                data-testid="promo-popup-admin-editor"
+                className="rounded-xl border border-[#B86B35]/35 p-4 space-y-4 bg-neutral-50/60 dark:bg-[#161614]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                  <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    <span>Açılır Kapanır Popup Pencere Duyurusu (Modal / Kampanya Penceresi)</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-bold">
                       <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              if (reader.result) {
-                                onUpdateSiteCmsConfig((prev) => ({
-                                  ...prev,
-                                  header: { ...prev.header, faviconUrl: String(reader.result) },
-                                }));
-                                onNotify('Favicon görseli başarıyla yüklendi.');
-                              }
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
+                        type="checkbox"
+                        data-testid="promo-popup-enabled-checkbox"
+                        checked={pop.enabled}
+                        onChange={(e) => updatePop({ enabled: e.target.checked })}
                       />
+                      <span>Popup Pencere Aktif</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pop.dismissible !== false}
+                        onChange={(e) => updatePop({ dismissible: e.target.checked })}
+                      />
+                      <span>Açılır / Kapanır (Kapatma Düğmesi)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pop.showOncePerSession}
+                        onChange={(e) => updatePop({ showOncePerSession: e.target.checked })}
+                      />
+                      <span>Oturumda 1 Kez Göster</span>
                     </label>
                   </div>
                 </div>
-              </div>
-            </div>
 
-            <form onSubmit={handleAddLogoPreset} className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-              <input
-                type="text"
-                value={logoPresetName}
-                onChange={(e) => setLogoPresetName(e.target.value)}
-                placeholder="Logo Adı (Örn: Ramazan Özel Altın Logo)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={logoPresetUrl}
-                onChange={(e) => setLogoPresetUrl(e.target.value)}
-                placeholder="Logo Görsel URL (/assets/...)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
-              >
-                + Yeni Logo Varyasyonu Ekle
-              </button>
-            </form>
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+                  {/* Sol 7 Sütun: İçerik, Tetikleyici, Kupon & Medya */}
+                  <div className="xl:col-span-7 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Tetikleme Tipi</label>
+                        <select
+                          value={pop.triggerType || 'delay'}
+                          onChange={(e) =>
+                            updatePop({ triggerType: e.target.value as 'immediate' | 'delay' | 'exit' })
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2"
+                        >
+                          <option value="immediate">Site Açılır Açılmaz (Hemen)</option>
+                          <option value="delay">Gecikmeli Açılış (Saniye)</option>
+                          <option value="exit">Çıkış Niyetinde (Exit Intent)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Gecikmesi (sn)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={60}
+                          value={pop.delaySeconds}
+                          onChange={(e) => updatePop({ delaySeconds: Math.max(0, Number(e.target.value)) })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Otomatik Kapanma (sn, 0=kapalı)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={120}
+                          value={pop.autoCloseSeconds ?? 0}
+                          onChange={(e) => updatePop({ autoCloseSeconds: Math.max(0, Number(e.target.value)) })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono"
+                        />
+                      </div>
+                    </div>
 
-            <div className="flex flex-wrap gap-2.5">
-              {siteCmsConfig.header.logoPresets.map((preset) => (
-                <div
-                  key={preset.id}
-                  className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border ${
-                    siteCmsConfig.header.logoUrl === preset.url
-                      ? 'border-[#B86B35] bg-[#B86B35]/10'
-                      : 'border-neutral-200 dark:border-neutral-800'
-                  }`}
-                >
-                  <img src={preset.url} alt={preset.name} className="w-8 h-8 object-contain rounded bg-neutral-900 p-0.5" />
-                  <span className="font-semibold">{preset.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        header: {
-                          ...prev.header,
-                          logoUrl: preset.url,
-                          logoPresets: prev.header.logoPresets.map((p) => ({
-                            ...p,
-                            isActive: p.id === preset.id,
-                          })),
-                        },
-                      }));
-                      onNotify(`"${preset.name}" aktif logo olarak seçildi.`);
-                    }}
-                    className="px-2 py-1 rounded bg-neutral-900 dark:bg-[#D4AF6A] text-white dark:text-[#141413] text-[10px] font-bold cursor-pointer"
-                  >
-                    {siteCmsConfig.header.logoUrl === preset.url ? 'Aktif' : 'Kullan'}
-                  </button>
-                  {siteCmsConfig.header.logoPresets.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onUpdateSiteCmsConfig((prev) => ({
-                          ...prev,
-                          header: {
-                            ...prev.header,
-                            logoPresets: prev.header.logoPresets.filter((p) => p.id !== preset.id),
-                          },
-                        }));
-                        onNotify('Logo kaydı silindi.');
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Popup Başlığı (TR)</label>
+                        <input
+                          type="text"
+                          value={pop.titleTr}
+                          onChange={(e) => updatePop({ titleTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Popup Title (EN)</label>
+                        <input
+                          type="text"
+                          value={pop.titleEn}
+                          onChange={(e) => updatePop({ titleEn: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">عنوان النافذة (AR)</label>
+                        <input
+                          type="text"
+                          value={pop.titleAr}
+                          onChange={(e) => updatePop({ titleAr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Açıklama (TR)</label>
+                        <textarea
+                          rows={2}
+                          value={pop.bodyTr}
+                          onChange={(e) => updatePop({ bodyTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Description (EN)</label>
+                        <textarea
+                          rows={2}
+                          value={pop.bodyEn}
+                          onChange={(e) => updatePop({ bodyEn: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">الوصف (AR)</label>
+                        <textarea
+                          rows={2}
+                          value={pop.bodyAr}
+                          onChange={(e) => updatePop({ bodyAr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Rozet Metni</label>
+                        <input
+                          type="text"
+                          value={pop.badgeText}
+                          onChange={(e) => updatePop({ badgeText: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Kupon Kodu</label>
+                        <input
+                          type="text"
+                          value={pop.couponCode}
+                          onChange={(e) => updatePop({ couponCode: e.target.value.toUpperCase() })}
+                          placeholder="HOSGELDIN15"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono uppercase"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Buton Yazısı</label>
+                        <input
+                          type="text"
+                          value={pop.ctaLabelTr}
+                          onChange={(e) => updatePop({ ctaLabelTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Buton Hedef URL</label>
+                        <input
+                          type="text"
+                          value={pop.ctaUrl}
+                          onChange={(e) => updatePop({ ctaUrl: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Popup Görseli (URL / Yükle)</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={pop.imageUrl}
+                            onChange={(e) => updatePop({ imageUrl: e.target.value })}
+                            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono text-[11px]"
+                          />
+                          <label className="px-3 py-2 rounded-lg bg-neutral-900 dark:bg-[#D4AF6A] text-white dark:text-[#141413] font-bold cursor-pointer shrink-0">
+                            Yükle
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) =>
+                                handleMultiImageUpload(e.target.files, (urls) => {
+                                  if (urls[0]) updatePop({ imageUrl: urls[0] });
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Popup Tanıtım Videosu (MP4 URL - Opsiyonel)</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={pop.videoUrl || ''}
+                            onChange={(e) => updatePop({ videoUrl: e.target.value })}
+                            placeholder="/videos/ciger-ocakbasi-promo.mp4"
+                            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono text-[11px]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => updatePop({ videoUrl: '/videos/ciger-ocakbasi-promo.mp4' })}
+                            className="px-2.5 py-1.5 rounded-lg border border-[#B86B35]/50 text-[#B86B35] font-semibold cursor-pointer shrink-0"
+                          >
+                            Ocakbaşı Video
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 pt-1">
+                      <div>
+                        <label className="block font-semibold mb-1">Arka Plan</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={pop.bgColor || '#1A0B08'}
+                            onChange={(e) => updatePop({ bgColor: e.target.value })}
+                            className="h-8 w-10 rounded cursor-pointer border"
+                          />
+                          <span className="font-mono text-[10px]">{pop.bgColor || '#1A0B08'}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Yazı Rengi</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={pop.textColor || '#FFF6E9'}
+                            onChange={(e) => updatePop({ textColor: e.target.value })}
+                            className="h-8 w-10 rounded cursor-pointer border"
+                          />
+                          <span className="font-mono text-[10px]">{pop.textColor || '#FFF6E9'}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Vurgu / Buton</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={pop.accentColor || '#D4A359'}
+                            onChange={(e) => updatePop({ accentColor: e.target.value })}
+                            className="h-8 w-10 rounded cursor-pointer border"
+                          />
+                          <span className="font-mono text-[10px]">{pop.accentColor || '#D4A359'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sağ 5 Sütun: Canlı Popup Pencere Önizleme */}
+                  <div className="xl:col-span-5">
+                    <div className="text-[11px] font-bold text-neutral-500 mb-2 flex items-center justify-between">
+                      <span>Canlı Açılır Kapanır Popup Önizleme</span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${
+                          pop.enabled ? 'bg-emerald-500/20 text-emerald-500' : 'bg-neutral-500/20 text-neutral-400'
+                        }`}
+                      >
+                        {pop.enabled ? 'Aktif' : 'Pasif'}
+                      </span>
+                    </div>
+                    <div
+                      className="rounded-2xl overflow-hidden border shadow-2xl relative"
+                      style={{
+                        backgroundColor: pop.bgColor || '#1A0B08',
+                        color: pop.textColor || '#FFF6E9',
+                        borderColor: pop.accentColor || '#D4A359',
                       }}
-                      className="text-rose-500 cursor-pointer"
-                      aria-label={`${preset.name} logosunu sil`}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                      {pop.dismissible !== false && (
+                        <span className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center font-bold text-xs">
+                          ×
+                        </span>
+                      )}
+                      {pop.videoUrl ? (
+                        <video
+                          src={pop.videoUrl}
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                          className="w-full h-36 object-cover"
+                        />
+                      ) : (
+                        <img
+                          src={pop.imageUrl || '/assets/aistudio/crops/hero-ciger.png'}
+                          alt={pop.titleTr}
+                          className="w-full h-36 object-cover"
+                        />
+                      )}
+                      <div className="p-4 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                            style={{ backgroundColor: pop.accentColor || '#D4A359', color: '#141413' }}
+                          >
+                            {pop.badgeText || 'KAMPANYA'}
+                          </span>
+                          {pop.couponCode && (
+                            <span className="font-mono text-[11px] px-2 py-0.5 rounded border border-dashed border-current">
+                              Kupon: {pop.couponCode}
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-editorial font-bold text-base leading-snug">{pop.titleTr}</div>
+                        <p className="text-[11px] opacity-85 leading-relaxed">{pop.bodyTr}</p>
+                        <div className="pt-1 flex items-center justify-between gap-2">
+                          <span
+                            className="inline-block px-3.5 py-2 rounded-xl text-xs font-bold"
+                            style={{ backgroundColor: pop.accentColor || '#D4A359', color: '#141413' }}
+                          >
+                            {pop.ctaLabelTr || 'Kuponu Uygula'}
+                          </span>
+                          <span className="text-[10px] opacity-70 font-mono">
+                            Tetik: {pop.triggerType || 'delay'} ({pop.delaySeconds}sn)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Header Ayarları */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <Sliders className="w-4 h-4" />
-              <span>Header (Üst Çubuk) Marka & Bileşen Ayarları</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <label className="block font-semibold mb-1">Marka Başlığı</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.header.brandTitle}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, brandTitle: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
               </div>
-              <div>
-                <label className="block font-semibold mb-1">Alt Başlık (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.header.brandSubtitleTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, brandSubtitleTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Subtitle (EN)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.header.brandSubtitleEn}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, brandSubtitleEn: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">العنوان الفرعي (AR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.header.brandSubtitleAr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, brandSubtitleAr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-5 pt-2">
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.header.stickyHeader}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, stickyHeader: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Sabit Header (Sticky)</span>
-              </label>
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.header.showSearchBarAboveSlider}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, showSearchBarAboveSlider: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Slider Üstünde Arama Çubuğunu Göster</span>
-              </label>
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.header.showLanguageSwitcher}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, showLanguageSwitcher: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Çoklu Dil Seçici (TR / EN / AR)</span>
-              </label>
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.header.showNotificationBell}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      header: { ...prev.header, showNotificationBell: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Canlı Bildirim Zilini Göster</span>
-              </label>
-            </div>
-          </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1824,725 +1906,1680 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
       )}
 
       {/* =====================================================================
-          SEKME 3: SLIDER, KARTLAR, BLOKLAR, BUTONLAR & TEMA AYARLARI
+          SEKME 3: BİRLEŞİK TASARIM STÜDYOSU (8 ALT MENÜ)
       ===================================================================== */}
-      {activeTab === 'slider_cards_blocks_theme' && (
-        <div className="space-y-6">
-          {/* Slider Yönetimi */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A]">
-                Ana Sayfa Slider Yönetimi ({siteCmsConfig.slider.slides.length} Slayt)
-              </div>
-              <div className="flex flex-wrap items-center gap-4">
-                <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={siteCmsConfig.slider.autoPlay}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        slider: { ...prev.slider, autoPlay: e.target.checked },
-                      }))
-                    }
-                  />
-                  <span>Otomatik Geçiş</span>
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <span>Süre (sn):</span>
-                  <input
-                    type="number"
-                    min={2}
-                    max={20}
-                    value={Math.round(siteCmsConfig.slider.intervalMs / 1000)}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        slider: { ...prev.slider, intervalMs: Math.max(2000, Number(e.target.value) * 1000) },
-                      }))
-                    }
-                    className="w-16 rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1 font-mono"
-                  />
-                </label>
-              </div>
-            </div>
-
-            <form onSubmit={handleSaveSlide} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <input
-                type="text"
-                required
-                value={slideTitleTr}
-                onChange={(e) => setSlideTitleTr(e.target.value)}
-                placeholder="Slayt Başlığı (TR) *"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={slideTitleEn}
-                onChange={(e) => setSlideTitleEn(e.target.value)}
-                placeholder="Slide Title (EN)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={slideTitleAr}
-                onChange={(e) => setSlideTitleAr(e.target.value)}
-                placeholder="عنوان الشريحة (AR)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={slideSubTr}
-                onChange={(e) => setSlideSubTr(e.target.value)}
-                placeholder="Alt Açıklama Metni"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={slideImageUrl}
-                onChange={(e) => setSlideImageUrl(e.target.value)}
-                placeholder="Görsel URL (/assets/...)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{editingSlideId ? 'Slaytı Güncelle' : 'Yeni Slayt Ekle'}</span>
-              </button>
-            </form>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {siteCmsConfig.slider.slides.map((sl) => (
-                <div
-                  key={sl.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex flex-col justify-between gap-2"
+      {activeTab === 'design_studio' && (
+        <div className="space-y-5">
+          {/* Tasarım Alt Menüsü */}
+          <div
+            role="tablist"
+            aria-label="Tasarım Alt Menü"
+            data-testid="design-studio-submenu"
+            className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-neutral-100 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800"
+          >
+            {(
+              [
+                { id: 'theme_colors', label: 'Tema & Renkler', icon: Palette },
+                { id: 'logo_header', label: 'Logo & Header', icon: ImageIcon },
+                { id: 'navbar_menus', label: 'Menü & Navbar', icon: MenuIcon },
+                { id: 'slider', label: 'Slider', icon: Sliders },
+                { id: 'blocks', label: 'Bloklar', icon: Layers },
+                { id: 'cards_grid', label: 'Kartlar & Grid', icon: Grid },
+                { id: 'buttons_icons', label: 'Butonlar & İkonlar', icon: MousePointerClick },
+                { id: 'footer_social', label: 'Footer & Sosyal Medya', icon: Share2 },
+              ] as const
+            ).map((sub) => {
+              const Icon = sub.icon;
+              return (
+                <button
+                  key={sub.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={designSubTab === sub.id}
+                  data-testid={`design-subtab-${sub.id}`}
+                  onClick={() => setDesignSubTab(sub.id)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold transition-all cursor-pointer ${
+                    designSubTab === sub.id
+                      ? 'bg-[#B86B35] text-white shadow'
+                      : 'bg-white dark:bg-[#1F1F1D] text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800 hover:border-[#B86B35]/50'
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <img src={sl.imageUrl} alt={sl.titleTr} className="w-16 h-12 rounded-lg object-cover shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-bold truncate">{sl.titleTr}</div>
-                      <div className="text-[11px] text-neutral-500 truncate">{sl.titleEn}</div>
-                    </div>
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{sub.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 1. TEMA & RENKLER */}
+          {designSubTab === 'theme_colors' && (
+            <div className="rounded-2xl border-2 border-[#D4A359]/40 bg-gradient-to-br from-[#1A0C09] to-[#120806] p-4 sm:p-5 space-y-4 text-xs text-[#FFF6E9] shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#D4A359]/20 pb-3">
+                <div className="flex items-center gap-2">
+                  <Palette className="w-5 h-5 text-[#D4A359]" />
+                  <div>
+                    <h4 className="font-bold text-sm sm:text-base text-[#F5D69B]">
+                      Mimari Tema Presetleri &amp; Canlı Renk Paleti (9 Farklı Tema)
+                    </h4>
+                    <p className="text-[11px] text-[#C4AC95]">
+                      Koyu, açık, editoryal, bento ve kemerli avlu tasarımlarını tek tıkla uygulayın veya renkleri özelleştirin.
+                    </p>
                   </div>
-                  <div className="flex items-center justify-between pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-[#D4A359]/20 text-[#F5D69B] font-mono text-[10px] font-bold">
+                  {(Object.values(THEME_PRESETS) as Array<(typeof THEME_PRESETS)[ThemeVariantId]>).length} Hazır Tema
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {(Object.values(THEME_PRESETS) as Array<(typeof THEME_PRESETS)[ThemeVariantId]>).map((preset) => {
+                  const activeVariant: ThemeVariantId =
+                    siteCmsConfig.design.themeVariant && THEME_PRESETS[siteCmsConfig.design.themeVariant]
+                      ? siteCmsConfig.design.themeVariant
+                      : 'oztike-classic';
+                  const isActive = activeVariant === preset.id;
+                  return (
                     <button
+                      key={preset.id}
                       type="button"
+                      data-testid={`theme-preset-${preset.id}`}
                       onClick={() => {
                         onUpdateSiteCmsConfig((prev) => ({
                           ...prev,
-                          slider: {
-                            ...prev.slider,
-                            slides: prev.slider.slides.map((x) =>
-                              x.id === sl.id ? { ...x, isActive: !x.isActive } : x
-                            ),
+                          design: {
+                            ...prev.design,
+                            themeVariant: preset.id,
+                            primaryColor: preset.primaryColor,
+                            secondaryColor: preset.secondaryColor,
+                            backgroundColor: preset.backgroundColor,
+                            surfaceColor: preset.surfaceColor,
+                            cardRadius: preset.cardRadius,
+                            buttonStyle: preset.buttonStyle,
+                            buttonRadius: preset.buttonRadius,
                           },
                         }));
+                        onNotify(`"${preset.name}" mimari teması ve renk paleti uygulandı.`);
                       }}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
-                        sl.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
+                      className={`rounded-xl p-3.5 border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                        isActive
+                          ? 'border-[#D4A359] bg-[#2B140E] ring-2 ring-[#D4A359]/40 shadow-lg'
+                          : 'border-[#D4A359]/25 bg-[#140604] hover:border-[#D4A359]/60'
                       }`}
                     >
-                      {sl.isActive ? 'Aktif' : 'Pasif'}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs sm:text-sm text-[#FFF7EB]">{preset.name}</span>
+                          {isActive && (
+                            <span className="px-2 py-0.5 rounded bg-[#D4A359] text-[#120806] text-[10px] font-bold shrink-0">
+                              Aktif
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] font-semibold text-[#D4A359]">{preset.tagline}</div>
+                        <div className="text-[11px] text-[#C4AC95] leading-relaxed">{preset.description}</div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                        <span
+                          className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                            preset.isLight ? 'bg-amber-100 text-amber-900' : 'bg-neutral-800 text-neutral-200'
+                          }`}
+                        >
+                          {preset.isLight ? 'Açık Tema' : 'Koyu Tema'}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="w-4 h-4 rounded-full border border-white/25" style={{ backgroundColor: preset.primaryColor }} />
+                          <span className="w-4 h-4 rounded-full border border-white/25" style={{ backgroundColor: preset.secondaryColor }} />
+                          <span className="w-4 h-4 rounded-full border border-white/25" style={{ backgroundColor: preset.backgroundColor }} />
+                          <span className="w-4 h-4 rounded-full border border-white/25" style={{ backgroundColor: preset.surfaceColor }} />
+                        </div>
+                      </div>
                     </button>
-                    <div className="flex items-center gap-3">
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-[#D4A359]/20">
+                {(
+                  [
+                    { key: 'primaryColor', label: 'Ana Vurgu (Primary)' },
+                    { key: 'secondaryColor', label: 'İkincil (Secondary)' },
+                    { key: 'backgroundColor', label: 'Arka Plan (Background)' },
+                    { key: 'surfaceColor', label: 'Yüzey/Kart (Surface)' },
+                  ] as const
+                ).map((c) => (
+                  <div key={c.key}>
+                    <label className="block text-[11px] font-semibold mb-1 text-[#C4AC95]">{c.label}</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={siteCmsConfig.design[c.key]}
+                        onChange={(e) =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            design: { ...prev.design, [c.key]: e.target.value },
+                          }))
+                        }
+                        className="h-8 w-10 rounded border border-[#D4A359]/30 bg-black cursor-pointer"
+                      />
+                      <span className="font-mono text-[10px] text-[#D4A359]">{siteCmsConfig.design[c.key]}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 2. LOGO & HEADER */}
+          {designSubTab === 'logo_header' && (
+            <div className="space-y-6">
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <ImageIcon className="w-4 h-4" />
+                  <span>Logo Yönetimi (Yükle / Değiştir / Boyut / Favicon)</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                  <div className="flex items-center gap-3 p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                    <img
+                      src={siteCmsConfig.header.logoUrl}
+                      alt="Aktif Logo"
+                      style={{ height: `${siteCmsConfig.header.logoHeightPx}px` }}
+                      className="w-auto object-contain"
+                    />
+                    <div>
+                      <div className="text-white font-bold text-xs">{siteCmsConfig.header.brandTitle}</div>
+                      <div className="text-[10px] text-amber-300">Aktif Logo ({siteCmsConfig.header.logoHeightPx}px)</div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Aktif Logo URL veya Dosya Yükle</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={siteCmsConfig.header.logoUrl}
+                        onChange={(e) =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            header: { ...prev.header, logoUrl: e.target.value },
+                          }))
+                        }
+                        className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                      />
+                      <label className="px-3 py-2 rounded-lg bg-neutral-900 dark:bg-[#D4AF6A] text-white dark:text-[#141413] font-bold cursor-pointer shrink-0">
+                        Yükle
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) =>
+                            handleMultiImageUpload(e.target.files, (urls) => {
+                              if (urls[0]) {
+                                onUpdateSiteCmsConfig((prev) => ({
+                                  ...prev,
+                                  header: { ...prev.header, logoUrl: urls[0] },
+                                }));
+                                onNotify('Yeni logo yüklendi.');
+                              }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">
+                      Logo Yüksekliği ({siteCmsConfig.header.logoHeightPx} px)
+                    </label>
+                    <input
+                      type="range"
+                      min={28}
+                      max={84}
+                      value={siteCmsConfig.header.logoHeightPx}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, logoHeightPx: Number(e.target.value) },
+                        }))
+                      }
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+
+                {/* Özel Favicon (Tarayıcı Sekme İkonu) Ekleme & Düzenleme Bölümü */}
+                <div className="rounded-xl border border-[#B86B35]/30 bg-neutral-50 dark:bg-[#141413] p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-xs text-[#B86B35] dark:text-[#D4AF6A]">
+                      Favicon Yönetimi (Tarayıcı Sekme &amp; Yer İmi İkonu)
+                    </div>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-t-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] text-[11px] font-semibold">
+                      <img
+                        src={siteCmsConfig.header.faviconUrl || siteCmsConfig.header.logoUrl}
+                        alt="Favicon Önizleme"
+                        data-testid="favicon-live-preview"
+                        className="w-4 h-4 rounded object-contain shrink-0"
+                      />
+                      <span className="truncate max-w-[160px]">{siteCmsConfig.header.brandTitle}</span>
+                      <span className="text-[10px] text-neutral-400">Sekme Önizleme</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                    <div className="md:col-span-2 flex items-center gap-2.5">
+                      <div className="w-11 h-11 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-900 flex items-center justify-center p-1.5">
+                        <img
+                          src={siteCmsConfig.header.faviconUrl || siteCmsConfig.header.logoUrl}
+                          alt="Favicon 32px"
+                          className="w-8 h-8 object-contain"
+                        />
+                      </div>
+                      <div className="text-[10px] text-neutral-500">32x32 px</div>
+                    </div>
+                    <div className="md:col-span-10 flex flex-wrap gap-2">
+                      <input
+                        type="text"
+                        data-testid="favicon-url-input"
+                        value={siteCmsConfig.header.faviconUrl}
+                        onChange={(e) =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            header: { ...prev.header, faviconUrl: e.target.value },
+                          }))
+                        }
+                        placeholder="/assets/aistudio/oztike-logo-transparent.png"
+                        className="flex-1 min-w-[220px] rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-2 font-mono"
+                      />
+                      <label className="px-3.5 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer shrink-0">
+                        Favicon Yükle
+                        <input
+                          type="file"
+                          accept="image/*,.ico,.svg,.png"
+                          className="hidden"
+                          onChange={(e) =>
+                            handleMultiImageUpload(e.target.files, (urls) => {
+                              if (urls[0]) {
+                                onUpdateSiteCmsConfig((prev) => ({
+                                  ...prev,
+                                  header: { ...prev.header, faviconUrl: urls[0] },
+                                }));
+                                onNotify('Yeni favicon yüklendi ve tarayıcı sekmesine uygulandı.');
+                              }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="text-neutral-500 font-semibold">Hazır İkonlar:</span>
+                    {[
+                      { label: 'Orijinal Logo', url: '/assets/aistudio/oztike-logo-transparent.png' },
+                      { label: 'Vektör Sembol (SVG)', url: '/icon.svg' },
+                      { label: 'PWA İkon (192px)', url: '/pwa-192x192.png' },
+                      { label: 'Apple Touch İkon', url: '/apple-touch-icon.png' },
+                    ].map((fav) => (
+                      <button
+                        key={fav.url}
+                        type="button"
+                        data-testid={`favicon-preset-${fav.url.replace(/[^a-z0-9]/gi, '-')}`}
+                        onClick={() => {
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            header: { ...prev.header, faviconUrl: fav.url },
+                          }));
+                          onNotify(`Favicon güncellendi: ${fav.label}`);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border cursor-pointer ${
+                          siteCmsConfig.header.faviconUrl === fav.url
+                            ? 'border-[#B86B35] bg-[#B86B35]/15 font-bold text-[#B86B35] dark:text-[#D4AF6A]'
+                            : 'border-neutral-300 dark:border-neutral-700'
+                        }`}
+                      >
+                        <img src={fav.url} alt="" className="w-3.5 h-3.5 object-contain" />
+                        <span>{fav.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <form onSubmit={handleAddLogoPreset} className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                  <input
+                    type="text"
+                    value={logoPresetName}
+                    onChange={(e) => setLogoPresetName(e.target.value)}
+                    placeholder="Logo Varyasyonu Adı (Örn: Ramazan Altın Logo)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    value={logoPresetUrl}
+                    onChange={(e) => setLogoPresetUrl(e.target.value)}
+                    placeholder="Logo Görsel URL (/assets/...)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                  <button type="submit" className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer">
+                    + Logo Varyasyonu Ekle
+                  </button>
+                </form>
+
+                <div className="flex flex-wrap gap-2.5">
+                  {siteCmsConfig.header.logoPresets.map((preset) => (
+                    <div
+                      key={preset.id}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border ${
+                        siteCmsConfig.header.logoUrl === preset.url
+                          ? 'border-[#B86B35] bg-[#B86B35]/10'
+                          : 'border-neutral-200 dark:border-neutral-800'
+                      }`}
+                    >
+                      <img src={preset.url} alt={preset.name} className="w-8 h-8 object-contain rounded bg-neutral-900 p-0.5" />
+                      <span className="font-semibold">{preset.name}</span>
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingSlideId(sl.id);
-                          setSlideTitleTr(sl.titleTr);
-                          setSlideTitleEn(sl.titleEn);
-                          setSlideTitleAr(sl.titleAr);
-                          setSlideSubTr(sl.subtitleTr);
-                          setSlideBadgeTr(sl.badgeTr);
-                          setSlideImageUrl(sl.imageUrl);
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            header: {
+                              ...prev.header,
+                              logoUrl: preset.url,
+                              logoPresets: prev.header.logoPresets.map((p) => ({ ...p, isActive: p.id === preset.id })),
+                            },
+                          }));
+                          onNotify(`"${preset.name}" aktif logo olarak seçildi.`);
                         }}
-                        className="inline-flex items-center gap-1 text-[#B86B35] font-semibold cursor-pointer"
+                        className="px-2 py-1 rounded bg-neutral-900 dark:bg-[#D4AF6A] text-white dark:text-[#141413] text-[10px] font-bold cursor-pointer"
                       >
-                        <Edit3 className="w-3.5 h-3.5" /> Düzenle
+                        {siteCmsConfig.header.logoUrl === preset.url ? 'Aktif' : 'Kullan'}
+                      </button>
+                      {siteCmsConfig.header.logoPresets.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              header: {
+                                ...prev.header,
+                                logoPresets: prev.header.logoPresets.filter((p) => p.id !== preset.id),
+                              },
+                            }));
+                            onNotify('Logo kaydı silindi.');
+                          }}
+                          className="text-rose-500 cursor-pointer"
+                          aria-label={`${preset.name} logosunu sil`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <Sliders className="w-4 h-4" />
+                  <span>Header (Üst Çubuk) Marka &amp; Bileşen Ayarları</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Marka Başlığı</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.header.brandTitle}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, brandTitle: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Alt Başlık (TR)</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.header.brandSubtitleTr}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, brandSubtitleTr: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Subtitle (EN)</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.header.brandSubtitleEn}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, brandSubtitleEn: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">العنوان الفرعي (AR)</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.header.brandSubtitleAr}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, brandSubtitleAr: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-5 pt-2">
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.header.stickyHeader}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, stickyHeader: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Sabit Header (Sticky)</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.header.showSearchBarAboveSlider}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, showSearchBarAboveSlider: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Slider Üstünde Arama Çubuğunu Göster</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.header.showLanguageSwitcher}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, showLanguageSwitcher: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Çoklu Dil Seçici (TR / EN / AR)</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.header.showNotificationBell}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          header: { ...prev.header, showNotificationBell: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Canlı Bildirim Zilini Göster</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 3. MENÜ & NAVBAR */}
+          {designSubTab === 'navbar_menus' && (
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <MenuIcon className="w-4 h-4" />
+                  <span>Navbar Konumu &amp; Menü Bağlantıları Yönetimi ({siteCmsConfig.header.navMenus.length})</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">Navbar Hizalama:</span>
+                  <select
+                    value={siteCmsConfig.design.navbarPosition || 'top'}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        design: { ...prev.design, navbarPosition: e.target.value as 'top' | 'centered' },
+                      }))
+                    }
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                  >
+                    <option value="top">Standart Yatay Üst Navbar</option>
+                    <option value="centered">Ortalanmış Marka &amp; Navbar</option>
+                  </select>
+                </div>
+              </div>
+
+              <form onSubmit={handleSaveNavMenu} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5">
+                  <input
+                    type="text"
+                    required
+                    value={navLabelTr}
+                    onChange={(e) => setNavLabelTr(e.target.value)}
+                    placeholder="Menü Adı (TR) *"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    value={navLabelEn}
+                    onChange={(e) => setNavLabelEn(e.target.value)}
+                    placeholder="Label (EN)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    value={navLabelAr}
+                    onChange={(e) => setNavLabelAr(e.target.value)}
+                    placeholder="الاسم (AR)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={navUrl}
+                    onChange={(e) => setNavUrl(e.target.value)}
+                    placeholder="Hedef URL (#menu)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                  <select
+                    value={navLocation}
+                    onChange={(e) => setNavLocation(e.target.value as NavMenuItem['location'])}
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  >
+                    <option value="both">Header + Footer</option>
+                    <option value="header">Sadece Header</option>
+                    <option value="footer">Sadece Footer</option>
+                  </select>
+                  <button type="submit" className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer">
+                    {editingNavId ? 'Menüyü Güncelle' : '+ Menü Ekle'}
+                  </button>
+                </div>
+              </form>
+
+              <div className="space-y-2">
+                {siteCmsConfig.header.navMenus.map((nav, idx) => (
+                  <div
+                    key={nav.id}
+                    className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-800 font-bold">
+                        #{idx + 1} · {nav.location.toUpperCase()}
+                      </span>
+                      <div>
+                        <span className="font-bold">{nav.labelTr}</span>
+                        <span className="text-neutral-500 ml-2">({nav.labelEn})</span>
+                        <div className="font-mono text-[11px] text-[#B86B35] dark:text-[#D4AF6A]">{nav.url}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleMoveNav(idx, -1)}
+                        disabled={idx === 0}
+                        className="p-1.5 rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-30 cursor-pointer"
+                        aria-label={`${nav.labelTr} yukarı taşı`}
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMoveNav(idx, 1)}
+                        disabled={idx === siteCmsConfig.header.navMenus.length - 1}
+                        className="p-1.5 rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-30 cursor-pointer"
+                        aria-label={`${nav.labelTr} aşağı taşı`}
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            header: {
+                              ...prev.header,
+                              navMenus: prev.header.navMenus.map((m) =>
+                                m.id === nav.id ? { ...m, isActive: !m.isActive } : m
+                              ),
+                            },
+                          }))
+                        }
+                        className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer ${
+                          nav.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
+                        }`}
+                      >
+                        {nav.isActive ? 'Aktif' : 'Gizli'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingNavId(nav.id);
+                          setNavLabelTr(nav.labelTr);
+                          setNavLabelEn(nav.labelEn);
+                          setNavLabelAr(nav.labelAr);
+                          setNavUrl(nav.url);
+                          setNavLocation(nav.location);
+                          setNavNewTab(nav.openInNewTab);
+                        }}
+                        className="text-[#B86B35] font-semibold cursor-pointer"
+                      >
+                        Düzenle
                       </button>
                       <button
                         type="button"
                         onClick={() => {
                           onUpdateSiteCmsConfig((prev) => ({
                             ...prev,
-                            slider: {
-                              ...prev.slider,
-                              slides: prev.slider.slides.filter((x) => x.id !== sl.id),
+                            header: {
+                              ...prev.header,
+                              navMenus: prev.header.navMenus.filter((m) => m.id !== nav.id),
                             },
                           }));
-                          onNotify('Slayt silindi.');
+                          onNotify(`"${nav.labelTr}" silindi.`);
                         }}
-                        className="inline-flex items-center gap-1 text-rose-500 font-semibold cursor-pointer"
+                        className="text-rose-500 font-semibold cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" /> Sil
+                        Sil
                       </button>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Öne Çıkan Kartlar (Showcase Cards CRUD) */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                <span>Vitrin Kartları Yönetimi ({siteCmsConfig.design.showcaseCards.length} Kart)</span>
+                ))}
               </div>
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+            </div>
+          )}
+
+          {/* 4. SLIDER */}
+          {designSubTab === 'slider' && (
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A]">
+                  Ana Sayfa Slider Yönetimi ({siteCmsConfig.slider.slides.length} Slayt)
+                </div>
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.slider.autoPlay}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          slider: { ...prev.slider, autoPlay: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Otomatik Geçiş</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5">
+                    <span>Süre (sn):</span>
+                    <input
+                      type="number"
+                      min={2}
+                      max={20}
+                      value={Math.round(siteCmsConfig.slider.intervalMs / 1000)}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          slider: { ...prev.slider, intervalMs: Math.max(2000, Number(e.target.value) * 1000) },
+                        }))
+                      }
+                      className="w-16 rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1 font-mono"
+                    />
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <span>Karartma Opaklığı ({Math.round((siteCmsConfig.slider.overlayOpacity ?? 0.55) * 100)}%):</span>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={0.9}
+                      step={0.05}
+                      value={siteCmsConfig.slider.overlayOpacity ?? 0.55}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          slider: { ...prev.slider, overlayOpacity: Number(e.target.value) },
+                        }))
+                      }
+                      className="w-24"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <form onSubmit={handleSaveSlide} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <input
-                  type="checkbox"
-                  checked={siteCmsConfig.modules.showcaseCardsEnabled}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      modules: { ...prev.modules, showcaseCardsEnabled: e.target.checked },
-                    }))
-                  }
+                  type="text"
+                  required
+                  value={slideTitleTr}
+                  onChange={(e) => setSlideTitleTr(e.target.value)}
+                  placeholder="Slayt Başlığı (TR) *"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                 />
-                <span>Vitrin Kartlarını Sitede Göster</span>
-              </label>
-            </div>
-
-            <form onSubmit={handleSaveCard} className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
-              <input
-                type="text"
-                required
-                value={cardTitleTr}
-                onChange={(e) => setCardTitleTr(e.target.value)}
-                placeholder="Kart Başlığı *"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={cardSubTr}
-                onChange={(e) => setCardSubTr(e.target.value)}
-                placeholder="Kart Açıklaması"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={cardBadge}
-                onChange={(e) => setCardBadge(e.target.value)}
-                placeholder="Rozet (Örn: USTALIK)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <select
-                value={cardIcon}
-                onChange={(e) => setCardIcon(e.target.value as ShowcaseCardItem['iconName'])}
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              >
-                <option value="flame">🔥 Ateş / Ocakbaşı</option>
-                <option value="utensils">🍴 Servis / İkram</option>
-                <option value="award">🏆 Ödül / Kalite</option>
-                <option value="clock">⏱️ Hız / Süre</option>
-                <option value="sparkles">✨ Özel</option>
-              </select>
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
-              >
-                {editingCardId ? 'Kartı Güncelle' : '+ Kart Ekle'}
-              </button>
-            </form>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {siteCmsConfig.design.showcaseCards.map((card) => (
-                <div
-                  key={card.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 space-y-2"
+                <input
+                  type="text"
+                  value={slideTitleEn}
+                  onChange={(e) => setSlideTitleEn(e.target.value)}
+                  placeholder="Slide Title (EN)"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+                <input
+                  type="text"
+                  value={slideTitleAr}
+                  onChange={(e) => setSlideTitleAr(e.target.value)}
+                  placeholder="عنوان الشريحة (AR)"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+                <input
+                  type="text"
+                  value={slideSubTr}
+                  onChange={(e) => setSlideSubTr(e.target.value)}
+                  placeholder="Alt Açıklama Metni"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+                <input
+                  type="text"
+                  value={slideImageUrl}
+                  onChange={(e) => setSlideImageUrl(e.target.value)}
+                  placeholder="Görsel URL (/assets/...)"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-500 font-bold">
-                      {card.badgeText}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onUpdateSiteCmsConfig((prev) => ({
-                          ...prev,
-                          design: {
-                            ...prev.design,
-                            showcaseCards: prev.design.showcaseCards.map((c) =>
-                              c.id === card.id ? { ...c, isActive: !c.isActive } : c
-                            ),
-                          },
-                        }));
-                      }}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
-                        card.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
-                      }`}
-                    >
-                      {card.isActive ? 'Aktif' : 'Gizli'}
-                    </button>
+                  <Plus className="w-4 h-4" />
+                  <span>{editingSlideId ? 'Slaytı Güncelle' : 'Yeni Slayt Ekle'}</span>
+                </button>
+              </form>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {siteCmsConfig.slider.slides.map((sl) => (
+                  <div
+                    key={sl.id}
+                    className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex flex-col justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-3">
+                      <img src={sl.imageUrl} alt={sl.titleTr} className="w-16 h-12 rounded-lg object-cover shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-bold truncate">{sl.titleTr}</div>
+                        <div className="text-[11px] text-neutral-500 truncate">{sl.titleEn}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            slider: {
+                              ...prev.slider,
+                              slides: prev.slider.slides.map((x) =>
+                                x.id === sl.id ? { ...x, isActive: !x.isActive } : x
+                              ),
+                            },
+                          }))
+                        }
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                          sl.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
+                        }`}
+                      >
+                        {sl.isActive ? 'Aktif' : 'Pasif'}
+                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingSlideId(sl.id);
+                            setSlideTitleTr(sl.titleTr);
+                            setSlideTitleEn(sl.titleEn);
+                            setSlideTitleAr(sl.titleAr);
+                            setSlideSubTr(sl.subtitleTr);
+                            setSlideBadgeTr(sl.badgeTr);
+                            setSlideImageUrl(sl.imageUrl);
+                          }}
+                          className="inline-flex items-center gap-1 text-[#B86B35] font-semibold cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" /> Düzenle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              slider: {
+                                ...prev.slider,
+                                slides: prev.slider.slides.filter((x) => x.id !== sl.id),
+                              },
+                            }));
+                            onNotify('Slayt silindi.');
+                          }}
+                          className="inline-flex items-center gap-1 text-rose-500 font-semibold cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Sil
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="font-bold">{card.titleTr}</div>
-                  <div className="text-[11px] text-neutral-500 line-clamp-2">{card.subtitleTr}</div>
-                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-neutral-100 dark:border-neutral-800">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingCardId(card.id);
-                        setCardTitleTr(card.titleTr);
-                        setCardTitleEn(card.titleEn);
-                        setCardSubTr(card.subtitleTr);
-                        setCardBadge(card.badgeText);
-                        setCardIcon(card.iconName);
-                      }}
-                      className="text-[#B86B35] font-semibold cursor-pointer"
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 5. BLOKLAR */}
+          {designSubTab === 'blocks' && (
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+              <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                <Layers className="w-4 h-4" />
+                <span>Özel Tanıtım Blokları &amp; Bölüm Düzeni ({siteCmsConfig.blocks.length} Blok)</span>
+              </div>
+
+              <form onSubmit={handleSaveBlock} className="grid grid-cols-1 sm:grid-cols-6 gap-2.5">
+                <input
+                  type="text"
+                  required
+                  value={blockTitleTr}
+                  onChange={(e) => setBlockTitleTr(e.target.value)}
+                  placeholder="Blok Başlığı *"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+                <input
+                  type="text"
+                  value={blockContentTr}
+                  onChange={(e) => setBlockContentTr(e.target.value)}
+                  placeholder="Blok Açıklaması"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 sm:col-span-2"
+                />
+                <input
+                  type="text"
+                  value={blockBtnLabel}
+                  onChange={(e) => setBlockBtnLabel(e.target.value)}
+                  placeholder="Buton Metni"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+                <select
+                  value={blockPosition}
+                  onChange={(e) => setBlockPosition(e.target.value as CustomBlockItem['position'])}
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                >
+                  <option value="top">Konum: Üst</option>
+                  <option value="middle">Konum: Orta</option>
+                  <option value="bottom">Konum: Alt</option>
+                </select>
+                <button type="submit" className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer">
+                  {editingBlockId ? 'Güncelle' : '+ Blok Ekle'}
+                </button>
+              </form>
+
+              <div className="space-y-2">
+                {siteCmsConfig.blocks.map((blk) => (
+                  <div
+                    key={blk.id}
+                    className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-500 font-bold">
+                          {blk.badgeText}
+                        </span>
+                        <span className="text-[10px] text-neutral-500 uppercase">[{blk.position}]</span>
+                      </div>
+                      <div className="font-bold mt-1">{blk.titleTr}</div>
+                      <div className="text-neutral-500 text-[11px]">{blk.contentTr}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            blocks: prev.blocks.map((b) =>
+                              b.id === blk.id ? { ...b, isActive: !b.isActive } : b
+                            ),
+                          }))
+                        }
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                          blk.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
+                        }`}
+                      >
+                        {blk.isActive ? 'Aktif' : 'Gizli'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingBlockId(blk.id);
+                          setBlockTitleTr(blk.titleTr);
+                          setBlockContentTr(blk.contentTr);
+                          setBlockBadge(blk.badgeText);
+                          setBlockBtnLabel(blk.buttonLabel);
+                          setBlockBtnUrl(blk.buttonUrl);
+                          setBlockPosition(blk.position);
+                        }}
+                        className="text-[#B86B35] font-semibold cursor-pointer"
+                      >
+                        Düzenle
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            blocks: prev.blocks.filter((b) => b.id !== blk.id),
+                          }));
+                          onNotify('Blok silindi.');
+                        }}
+                        className="text-rose-500 font-semibold cursor-pointer"
+                      >
+                        Sil
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 6. KARTLAR & GRID */}
+          {designSubTab === 'cards_grid' && (
+            <div className="space-y-6">
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <Grid className="w-4 h-4" />
+                  <span>Izgara (Grid) Düzeni &amp; Ürün Kartı Stilleri</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Masaüstü Grid Sütun</label>
+                    <select
+                      value={siteCmsConfig.design.gridColumnsDesktop ?? 3}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          design: { ...prev.design, gridColumnsDesktop: Number(e.target.value) as 2 | 3 | 4 },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                     >
-                      Düzenle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
+                      <option value={2}>2 Sütun (Geniş Ocakbaşı)</option>
+                      <option value={3}>3 Sütun (Dengeli Vitrin)</option>
+                      <option value={4}>4 Sütun (Yoğun Katalog)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Mobil Grid Sütun</label>
+                    <select
+                      value={siteCmsConfig.design.gridColumnsMobile ?? 1}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          design: { ...prev.design, gridColumnsMobile: Number(e.target.value) as 1 | 2 },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    >
+                      <option value={1}>1 Sütun (Büyük Görsel)</option>
+                      <option value={2}>2 Sütun (Kompakt Kart)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Grid Hücre Aralığı</label>
+                    <select
+                      value={siteCmsConfig.design.gridGap || 'normal'}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          design: { ...prev.design, gridGap: e.target.value as 'compact' | 'normal' | 'relaxed' },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    >
+                      <option value="compact">Sıkı (Compact)</option>
+                      <option value="normal">Standart (Normal)</option>
+                      <option value="relaxed">Ferah (Relaxed)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kart Tasarım Stili</label>
+                    <select
+                      value={siteCmsConfig.design.cardStyle}
+                      onChange={(e) =>
                         onUpdateSiteCmsConfig((prev) => ({
                           ...prev,
                           design: {
                             ...prev.design,
-                            showcaseCards: prev.design.showcaseCards.filter((c) => c.id !== card.id),
+                            cardStyle: e.target.value as SiteCmsConfig['design']['cardStyle'],
                           },
-                        }));
-                        onNotify('Kart silindi.');
-                      }}
-                      className="text-rose-500 font-semibold cursor-pointer"
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                     >
-                      Sil
-                    </button>
+                      <option value="glass-gold">Cam &amp; Altın Çerçeve</option>
+                      <option value="minimal-dark">Minimal Koyu Yüzey</option>
+                      <option value="classic-border">Klasik Çizgili Kart</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kart Köşe Yuvarlaklığı</label>
+                    <select
+                      value={siteCmsConfig.design.cardRadius}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          design: {
+                            ...prev.design,
+                            cardRadius: e.target.value as SiteCmsConfig['design']['cardRadius'],
+                          },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    >
+                      <option value="rounded-xl">Klasik Köşe (rounded-xl)</option>
+                      <option value="rounded-2xl">Modern Yumuşak (rounded-2xl)</option>
+                      <option value="rounded-3xl">Tam Oval (rounded-3xl)</option>
+                    </select>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Dinamik Tema Tasarım Editörü (Bakır & Şampanya Paleti) */}
-          <div className="rounded-2xl border-2 border-[#D4A359]/40 bg-gradient-to-br from-[#1A0C09] to-[#120806] p-4 sm:p-5 space-y-4 text-xs text-[#FFF6E9] shadow-xl">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#D4A359]/20 pb-3">
-              <div className="flex items-center gap-2">
-                <Palette className="w-5 h-5 text-[#D4A359]" />
-                <div>
-                  <h4 className="font-bold text-sm sm:text-base text-[#F5D69B]">
-                    ÖzTike OS Dinamik Tema Tasarım Editörü
-                  </h4>
-                  <p className="text-[11px] text-[#C4AC95]">
-                    İşletme logosu ana renkleri (ÖzTike Bakır ve Şampanya) ile tek tıkla renk paleti değiştirin.
-                  </p>
+                <div className="flex flex-wrap gap-5 pt-2">
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.modules.showcaseCardsEnabled}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          modules: { ...prev.modules, showcaseCardsEnabled: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Vitrin Kartlarını Göster</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.design.showProductCalories}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          design: { ...prev.design, showProductCalories: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Kartlarda Kalori (kcal) Göster</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.design.showProductPrepTime}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          design: { ...prev.design, showProductPrepTime: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Kartlarda Hazırlama Süresi (dk) Göster</span>
+                  </label>
                 </div>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-[#D4A359]/20 text-[#F5D69B] font-mono text-[10px] font-bold">
-                Canlı Tema
-              </span>
-            </div>
 
-            {/* Hazır Tema Paleti Presetleri */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {[
-                {
-                  id: 'bakir',
-                  name: 'ÖzTike Bakır (Orijinal)',
-                  desc: 'Köz bakır tonları ve sıcak tonlar',
-                  primary: '#D4A359',
-                  secondary: '#B0782C',
-                  bg: '#120806',
-                  surface: '#1A0C09',
-                },
-                {
-                  id: 'sampanya',
-                  name: 'Şampanya Lüks Altın',
-                  desc: 'Zarif şampanya ve lüks altın paleti',
-                  primary: '#F3E5AB',
-                  secondary: '#C5A059',
-                  bg: '#0F0E0D',
-                  surface: '#1C1A17',
-                },
-                {
-                  id: 'terracotta',
-                  name: 'Gaziantep Toprak & Fıstık',
-                  desc: 'Terracotta toprak ve fıstık yeşili',
-                  primary: '#E07A5F',
-                  secondary: '#81B29A',
-                  bg: '#1D1E2C',
-                  surface: '#262738',
-                },
-                {
-                  id: 'charcoal',
-                  name: 'Ocakbaşı Karbon Siyah',
-                  desc: 'Derin meşe közü siyahı ve kehribar',
-                  primary: '#F59E0B',
-                  secondary: '#D97706',
-                  bg: '#09090B',
-                  surface: '#18181B',
-                },
-              ].map((preset) => {
-                const isActive =
-                  siteCmsConfig.design.primaryColor === preset.primary &&
-                  siteCmsConfig.design.backgroundColor === preset.bg;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => {
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  <span>Öne Çıkan Vitrin Kartları ({siteCmsConfig.design.showcaseCards.length} Kart)</span>
+                </div>
+                <form onSubmit={handleSaveCard} className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+                  <input
+                    type="text"
+                    required
+                    value={cardTitleTr}
+                    onChange={(e) => setCardTitleTr(e.target.value)}
+                    placeholder="Kart Başlığı *"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    value={cardSubTr}
+                    onChange={(e) => setCardSubTr(e.target.value)}
+                    placeholder="Kart Açıklaması"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    value={cardBadge}
+                    onChange={(e) => setCardBadge(e.target.value)}
+                    placeholder="Rozet (Örn: USTALIK)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <select
+                    value={cardIcon}
+                    onChange={(e) => setCardIcon(e.target.value as ShowcaseCardItem['iconName'])}
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  >
+                    <option value="flame">Ateş / Ocakbaşı</option>
+                    <option value="utensils">Servis / İkram</option>
+                    <option value="award">Ödül / Kalite</option>
+                    <option value="clock">Hız / Süre</option>
+                    <option value="sparkles">Özel</option>
+                  </select>
+                  <button type="submit" className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer">
+                    {editingCardId ? 'Kartı Güncelle' : '+ Kart Ekle'}
+                  </button>
+                </form>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {siteCmsConfig.design.showcaseCards.map((card) => (
+                    <div key={card.id} className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-500 font-bold">
+                          {card.badgeText}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              design: {
+                                ...prev.design,
+                                showcaseCards: prev.design.showcaseCards.map((c) =>
+                                  c.id === card.id ? { ...c, isActive: !c.isActive } : c
+                                ),
+                              },
+                            }))
+                          }
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                            card.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
+                          }`}
+                        >
+                          {card.isActive ? 'Aktif' : 'Gizli'}
+                        </button>
+                      </div>
+                      <div className="font-bold">{card.titleTr}</div>
+                      <div className="text-[11px] text-neutral-500 line-clamp-2">{card.subtitleTr}</div>
+                      <div className="flex items-center justify-end gap-3 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCardId(card.id);
+                            setCardTitleTr(card.titleTr);
+                            setCardTitleEn(card.titleEn);
+                            setCardSubTr(card.subtitleTr);
+                            setCardBadge(card.badgeText);
+                            setCardIcon(card.iconName);
+                          }}
+                          className="text-[#B86B35] font-semibold cursor-pointer"
+                        >
+                          Düzenle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              design: {
+                                ...prev.design,
+                                showcaseCards: prev.design.showcaseCards.filter((c) => c.id !== card.id),
+                              },
+                            }));
+                            onNotify('Kart silindi.');
+                          }}
+                          className="text-rose-500 font-semibold cursor-pointer"
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 7. BUTONLAR & İKONLAR */}
+          {designSubTab === 'buttons_icons' && (
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-5">
+              <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                <MousePointerClick className="w-4 h-4" />
+                <span>Buton Tasarımı, Tipografi &amp; İkonografi Ayarları</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1">Buton Renk &amp; Vurgu</label>
+                  <select
+                    value={siteCmsConfig.design.buttonStyle}
+                    onChange={(e) =>
                       onUpdateSiteCmsConfig((prev) => ({
                         ...prev,
                         design: {
                           ...prev.design,
-                          primaryColor: preset.primary,
-                          secondaryColor: preset.secondary,
-                          backgroundColor: preset.bg,
-                          surfaceColor: preset.surface,
+                          buttonStyle: e.target.value as SiteCmsConfig['design']['buttonStyle'],
                         },
-                      }));
-                      onNotify(`"${preset.name}" tema paleti uygulandı.`);
-                    }}
-                    className={`rounded-xl p-3 border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
-                      isActive
-                        ? 'border-[#D4A359] bg-[#2B140E] ring-2 ring-[#D4A359]/40 shadow-lg'
-                        : 'border-[#D4A359]/25 bg-[#140604] hover:border-[#D4A359]/60'
-                    }`}
+                      }))
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                   >
-                    <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-xs text-[#FFF7EB]">{preset.name}</span>
-                        {isActive && (
-                          <span className="px-1.5 py-0.5 rounded bg-[#D4A359] text-[#120806] text-[9px] font-bold">
-                            Aktif
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-[#A88E76] mt-0.5">{preset.desc}</div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-5 h-5 rounded-full border border-white/20" style={{ backgroundColor: preset.primary }} />
-                      <span className="w-5 h-5 rounded-full border border-white/20" style={{ backgroundColor: preset.secondary }} />
-                      <span className="w-5 h-5 rounded-full border border-white/20" style={{ backgroundColor: preset.bg }} />
-                      <span className="w-5 h-5 rounded-full border border-white/20" style={{ backgroundColor: preset.surface }} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                    <option value="gold-gradient">Altın &amp; Bakır Gradyan</option>
+                    <option value="copper-solid">Köz Bakır Düz Stil</option>
+                    <option value="emerald-accent">Zümrüt Yeşili Vurgu</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Buton Köşe Yuvarlaklığı</label>
+                  <select
+                    value={siteCmsConfig.design.buttonRadius}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        design: {
+                          ...prev.design,
+                          buttonRadius: e.target.value as SiteCmsConfig['design']['buttonRadius'],
+                        },
+                      }))
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  >
+                    <option value="rounded-lg">Hafif Köşeli (rounded-lg)</option>
+                    <option value="rounded-xl">Modern Yuvarlak (rounded-xl)</option>
+                    <option value="rounded-full">Tam Yuvarlak (rounded-full)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Yazı Kalınlığı (Weight)</label>
+                  <select
+                    value={siteCmsConfig.design.buttonFontWeight || 'bold'}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        design: {
+                          ...prev.design,
+                          buttonFontWeight: e.target.value as 'semibold' | 'bold' | 'extrabold',
+                        },
+                      }))
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  >
+                    <option value="semibold">Yarı Kalın (Semibold)</option>
+                    <option value="bold">Kalın (Bold)</option>
+                    <option value="extrabold">Ekstra Kalın (Extrabold)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">İkon Çizim Stili</label>
+                  <select
+                    value={siteCmsConfig.design.iconStyle || 'outline'}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        design: {
+                          ...prev.design,
+                          iconStyle: e.target.value as 'outline' | 'solid' | 'rounded',
+                        },
+                      }))
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  >
+                    <option value="outline">İnce Çizgi (Outline)</option>
+                    <option value="solid">Dolgun Vurgu (Solid)</option>
+                    <option value="rounded">Kapsül Arka Plan (Rounded)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">
+                    İkon Boyutu ({siteCmsConfig.design.iconSizePx ?? 18}px)
+                  </label>
+                  <input
+                    type="range"
+                    min={14}
+                    max={28}
+                    value={siteCmsConfig.design.iconSizePx ?? 18}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        design: { ...prev.design, iconSizePx: Number(e.target.value) },
+                      }))
+                    }
+                    className="w-full mt-2 accent-[#B86B35]"
+                  />
+                </div>
+              </div>
 
-            {/* Özel Renk Seçiciler */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-[#D4A359]/20">
-              <div>
-                <label className="block text-[11px] font-semibold mb-1 text-[#C4AC95]">Ana Vurgu (Primary)</label>
-                <div className="flex items-center gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1">Hero QR Buton Yazısı (TR)</label>
                   <input
-                    type="color"
-                    value={siteCmsConfig.design.primaryColor}
+                    type="text"
+                    value={siteCmsConfig.design.qrButtonLabelTr}
                     onChange={(e) =>
                       onUpdateSiteCmsConfig((prev) => ({
                         ...prev,
-                        design: { ...prev.design, primaryColor: e.target.value },
+                        design: { ...prev.design, qrButtonLabelTr: e.target.value },
                       }))
                     }
-                    className="h-8 w-10 rounded border border-[#D4A359]/30 bg-black cursor-pointer"
-                    aria-label="Ana Vurgu Rengi"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                   />
-                  <span className="font-mono text-[10px] text-[#D4A359]">{siteCmsConfig.design.primaryColor}</span>
                 </div>
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold mb-1 text-[#C4AC95]">İkincil (Secondary)</label>
-                <div className="flex items-center gap-2">
+                <div>
+                  <label className="block font-semibold mb-1">Sipariş Gönder Buton Yazısı (TR)</label>
                   <input
-                    type="color"
-                    value={siteCmsConfig.design.secondaryColor}
+                    type="text"
+                    value={siteCmsConfig.design.orderButtonLabelTr}
                     onChange={(e) =>
                       onUpdateSiteCmsConfig((prev) => ({
                         ...prev,
-                        design: { ...prev.design, secondaryColor: e.target.value },
+                        design: { ...prev.design, orderButtonLabelTr: e.target.value },
                       }))
                     }
-                    className="h-8 w-10 rounded border border-[#D4A359]/30 bg-black cursor-pointer"
-                    aria-label="İkincil Renk"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                   />
-                  <span className="font-mono text-[10px] text-[#D4A359]">{siteCmsConfig.design.secondaryColor}</span>
                 </div>
               </div>
-              <div>
-                <label className="block text-[11px] font-semibold mb-1 text-[#C4AC95]">Arka Plan (Background)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={siteCmsConfig.design.backgroundColor}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        design: { ...prev.design, backgroundColor: e.target.value },
-                      }))
-                    }
-                    className="h-8 w-10 rounded border border-[#D4A359]/30 bg-black cursor-pointer"
-                    aria-label="Arka Plan Rengi"
-                  />
-                  <span className="font-mono text-[10px] text-[#D4A359]">{siteCmsConfig.design.backgroundColor}</span>
-                </div>
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold mb-1 text-[#C4AC95]">Yüzey/Kart (Surface)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={siteCmsConfig.design.surfaceColor}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        design: { ...prev.design, surfaceColor: e.target.value },
-                      }))
-                    }
-                    className="h-8 w-10 rounded border border-[#D4A359]/30 bg-black cursor-pointer"
-                    aria-label="Yüzey Kart Rengi"
-                  />
-                  <span className="font-mono text-[10px] text-[#D4A359]">{siteCmsConfig.design.surfaceColor}</span>
-                </div>
-              </div>
-            </div>
-          </div>
 
-          {/* Butonlar & Tema Renkleri */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <Palette className="w-4 h-4" />
-              <span>Tema Renkleri, Kart & Buton Stilleri</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <label className="block font-semibold mb-1">Ürün Kartı Köşe Stili</label>
-                <select
-                  value={siteCmsConfig.design.cardRadius}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      design: {
-                        ...prev.design,
-                        cardRadius: e.target.value as SiteCmsConfig['design']['cardRadius'],
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+              <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 flex flex-wrap items-center gap-4">
+                <span className="text-[11px] text-neutral-400">Canlı Buton &amp; İkon Önizlemesi:</span>
+                <span
+                  className={`inline-flex items-center gap-2 px-4 py-2 text-xs text-white ${siteCmsConfig.design.buttonRadius} font-${siteCmsConfig.design.buttonFontWeight || 'bold'}`}
+                  style={{ backgroundColor: siteCmsConfig.design.primaryColor }}
                 >
-                  <option value="rounded-xl">Klasik Köşe (rounded-xl)</option>
-                  <option value="rounded-2xl">Modern Yumuşak Köşe (rounded-2xl)</option>
-                  <option value="rounded-3xl">Tam Oval Kart (rounded-3xl)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-1">Buton Renk & Vurgu Stili</label>
-                <select
-                  value={siteCmsConfig.design.buttonStyle}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      design: {
-                        ...prev.design,
-                        buttonStyle: e.target.value as SiteCmsConfig['design']['buttonStyle'],
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  <Sparkles style={{ width: siteCmsConfig.design.iconSizePx ?? 18, height: siteCmsConfig.design.iconSizePx ?? 18 }} />
+                  <span>{siteCmsConfig.design.qrButtonLabelTr}</span>
+                </span>
+                <span
+                  className={`inline-flex items-center gap-2 px-4 py-2 text-xs border border-[#D4AF6A] text-[#F6D79E] ${siteCmsConfig.design.buttonRadius} font-${siteCmsConfig.design.buttonFontWeight || 'bold'}`}
                 >
-                  <option value="gold-gradient">Altın & Bakır Gradyan</option>
-                  <option value="copper-solid">Köz Bakır Düz Stil</option>
-                  <option value="emerald-accent">Zümrüt Yeşili Vurgu</option>
-                </select>
+                  <CheckCircle2 style={{ width: siteCmsConfig.design.iconSizePx ?? 18, height: siteCmsConfig.design.iconSizePx ?? 18 }} />
+                  <span>{siteCmsConfig.design.orderButtonLabelTr}</span>
+                </span>
               </div>
+            </div>
+          )}
 
-              <div>
-                <label className="block font-semibold mb-1">Buton Köşe Yuvarlaklığı</label>
-                <select
-                  value={siteCmsConfig.design.buttonRadius}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      design: {
-                        ...prev.design,
-                        buttonRadius: e.target.value as SiteCmsConfig['design']['buttonRadius'],
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                >
-                  <option value="rounded-lg">Hafif Köşeli (rounded-lg)</option>
-                  <option value="rounded-xl">Modern Yuvarlak (rounded-xl)</option>
-                  <option value="rounded-full">Tam Yuvarlak (rounded-full)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-1">Ana & Arka Plan Tema Rengi</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={siteCmsConfig.design.primaryColor}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        design: { ...prev.design, primaryColor: e.target.value },
-                      }))
-                    }
-                    className="h-9 w-11 rounded border cursor-pointer"
-                    aria-label="Ana Vurgu Rengi"
-                  />
-                  <input
-                    type="color"
-                    value={siteCmsConfig.design.backgroundColor}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        design: { ...prev.design, backgroundColor: e.target.value },
-                      }))
-                    }
-                    className="h-9 w-11 rounded border cursor-pointer"
-                    aria-label="Arka Plan Rengi"
-                  />
-                  <span className="font-mono text-[11px] text-neutral-500">
-                    {siteCmsConfig.design.primaryColor}
-                  </span>
+          {/* 8. FOOTER & SOSYAL MEDYA */}
+          {designSubTab === 'footer_social' && (
+            <div className="space-y-6">
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <Phone className="w-4 h-4" />
+                  <span>Footer Düzeni, Renk &amp; İletişim Ayarları</span>
                 </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              <div>
-                <label className="block font-semibold mb-1">Hero QR Buton Yazısı (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.design.qrButtonLabelTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      design: { ...prev.design, qrButtonLabelTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Sipariş Gönder Buton Yazısı (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.design.orderButtonLabelTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      design: { ...prev.design, orderButtonLabelTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Özel Blok ve Buton Yönetimi (CRUD) */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <Layers className="w-4 h-4" />
-              <span>Özel Tanıtım Blokları & Aksiyon Butonları ({siteCmsConfig.blocks.length} Blok)</span>
-            </div>
-
-            <form onSubmit={handleSaveBlock} className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-              <input
-                type="text"
-                required
-                value={blockTitleTr}
-                onChange={(e) => setBlockTitleTr(e.target.value)}
-                placeholder="Blok Başlığı *"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={blockContentTr}
-                onChange={(e) => setBlockContentTr(e.target.value)}
-                placeholder="Blok Açıklaması"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                value={blockBtnLabel}
-                onChange={(e) => setBlockBtnLabel(e.target.value)}
-                placeholder="Buton Metni"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <select
-                value={blockPosition}
-                onChange={(e) => setBlockPosition(e.target.value as CustomBlockItem['position'])}
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              >
-                <option value="top">Konum: Üst</option>
-                <option value="middle">Konum: Orta</option>
-                <option value="bottom">Konum: Alt</option>
-              </select>
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
-              >
-                {editingBlockId ? 'Bloğu Güncelle' : '+ Yeni Blok Ekle'}
-              </button>
-            </form>
-
-            <div className="space-y-2">
-              {siteCmsConfig.blocks.map((blk) => (
-                <div
-                  key={blk.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex flex-wrap items-center justify-between gap-3"
-                >
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-500 font-bold">
-                        {blk.badgeText}
-                      </span>
-                      <span className="text-[10px] text-neutral-500 uppercase">[{blk.position}]</span>
-                    </div>
-                    <div className="font-bold mt-1">{blk.titleTr}</div>
-                    <div className="text-neutral-500 text-[11px]">{blk.contentTr}</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingBlockId(blk.id);
-                        setBlockTitleTr(blk.titleTr);
-                        setBlockContentTr(blk.contentTr);
-                        setBlockBadge(blk.badgeText);
-                        setBlockBtnLabel(blk.buttonLabel);
-                        setBlockBtnUrl(blk.buttonUrl);
-                        setBlockPosition(blk.position);
-                      }}
-                      className="text-[#B86B35] font-semibold cursor-pointer"
-                    >
-                      Düzenle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
+                    <label className="block font-semibold mb-1">Footer Sütun Sayısı</label>
+                    <select
+                      value={siteCmsConfig.design.footerColumns ?? 3}
+                      onChange={(e) =>
                         onUpdateSiteCmsConfig((prev) => ({
                           ...prev,
-                          blocks: prev.blocks.filter((b) => b.id !== blk.id),
-                        }));
-                        onNotify('Blok silindi.');
-                      }}
-                      className="text-rose-500 font-semibold cursor-pointer"
+                          design: { ...prev.design, footerColumns: Number(e.target.value) as 2 | 3 | 4 },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
                     >
-                      Sil
-                    </button>
+                      <option value={2}>2 Sütun (Kompakt)</option>
+                      <option value={3}>3 Sütun (Klasik)</option>
+                      <option value={4}>4 Sütun (Geniş Kurumsal)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Footer Arka Plan Rengi</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={siteCmsConfig.design.footerBgColor || '#100705'}
+                        onChange={(e) =>
+                          onUpdateSiteCmsConfig((prev) => ({
+                            ...prev,
+                            design: { ...prev.design, footerBgColor: e.target.value },
+                          }))
+                        }
+                        className="h-9 w-12 rounded cursor-pointer border"
+                      />
+                      <span className="font-mono text-[11px]">{siteCmsConfig.design.footerBgColor || '#100705'}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Footer Telif Metni (TR)</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.footer.copyrightTr}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          footer: { ...prev.footer, copyrightTr: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Gösterilen Telefon</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.contact.phoneDisplay}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          contact: { ...prev.contact, phoneDisplay: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">WhatsApp Numarası</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.contact.whatsappRaw}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          contact: { ...prev.contact, whatsappRaw: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kurumsal E-posta</label>
+                    <input
+                      type="email"
+                      value={siteCmsConfig.contact.email}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          contact: { ...prev.contact, email: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold mb-1">Açık Adres (TR)</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.contact.addressTr}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          contact: { ...prev.contact, addressTr: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Çalışma Saatleri (TR)</label>
+                    <input
+                      type="text"
+                      value={siteCmsConfig.contact.workingHoursTr}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          contact: { ...prev.contact, workingHoursTr: e.target.value },
+                        }))
+                      }
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
                   </div>
                 </div>
-              ))}
+                <div>
+                  <label className="block font-semibold mb-1">Footer Hakkında Kısa Metni (TR)</label>
+                  <textarea
+                    rows={2}
+                    value={siteCmsConfig.footer.aboutTr}
+                    onChange={(e) =>
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        footer: { ...prev.footer, aboutTr: e.target.value },
+                      }))
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-5">
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.footer.showSocialIcons}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          footer: { ...prev.footer, showSocialIcons: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Footer’da Sosyal Medya Bağlantılarını Göster</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={siteCmsConfig.footer.showAdminLoginButton}
+                      onChange={(e) =>
+                        onUpdateSiteCmsConfig((prev) => ({
+                          ...prev,
+                          footer: { ...prev.footer, showAdminLoginButton: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Site En Altında &ldquo;Yönetici Girişi&rdquo; Butonunu Göster</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                  <Share2 className="w-4 h-4" />
+                  <span>Sosyal Medya Hesapları (Sırala / Ekle / Düzenle / Sil)</span>
+                </div>
+                <form onSubmit={handleSaveSocial} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <select
+                    value={socPlatform}
+                    onChange={(e) => setSocPlatform(e.target.value as SocialMediaLinkItem['platform'])}
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-bold"
+                  >
+                    {(['Instagram', 'Facebook', 'YouTube', 'TikTok', 'WhatsApp', 'Google Maps'] as const).map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    required
+                    value={socHandle}
+                    onChange={(e) => setSocHandle(e.target.value)}
+                    placeholder="Hesap Etiketi (@oztikeciger)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={socUrl}
+                    onChange={(e) => setSocUrl(e.target.value)}
+                    placeholder="URL (https://...)"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                  <button type="submit" className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer">
+                    {editingSocId ? 'Hesabı Güncelle' : '+ Sosyal Medya Ekle'}
+                  </button>
+                </form>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {siteCmsConfig.socialMedia.map((soc, idx) => (
+                    <div
+                      key={soc.id}
+                      className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-bold">#{idx + 1} · {soc.platform}</div>
+                        <div className="text-[11px] text-neutral-500 truncate">{soc.handleOrLabel} · {soc.url}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveSocial(idx, -1)}
+                          disabled={idx === 0}
+                          className="p-1 rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-30 cursor-pointer"
+                          aria-label={`${soc.platform} yukarı taşı`}
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveSocial(idx, 1)}
+                          disabled={idx === siteCmsConfig.socialMedia.length - 1}
+                          className="p-1 rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-30 cursor-pointer"
+                          aria-label={`${soc.platform} aşağı taşı`}
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingSocId(soc.id);
+                            setSocPlatform(soc.platform);
+                            setSocHandle(soc.handleOrLabel);
+                            setSocUrl(soc.url);
+                          }}
+                          className="text-[#B86B35] font-semibold cursor-pointer"
+                        >
+                          Düzenle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              socialMedia: prev.socialMedia.filter((s) => s.id !== soc.id),
+                            }));
+                            onNotify('Sosyal medya silindi.');
+                          }}
+                          className="text-rose-500 font-semibold cursor-pointer"
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
       {/* =====================================================================
           SEKME 4A: FOTO & VİDEO GALERİ YÖNETİMİ
       ===================================================================== */}
-      {(activeTab === 'gallery_only' || activeTab === 'gallery_social_footer') && (
+      {activeTab === 'gallery_only' && (
         <div className="space-y-6">
           {/* Fotoğraf & Video Galeri */}
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
@@ -2714,254 +3751,7 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
         </div>
       )}
 
-      {/* =====================================================================
-          SEKME 4B: SIRALI SOSYAL MEDYA, İLETİŞİM & FOOTER YÖNETİMİ
-      ===================================================================== */}
-      {(activeTab === 'social_footer' || activeTab === 'gallery_social_footer') && (
-        <div className="space-y-6">
-          {/* Sıralı Sosyal Medya Yönetimi */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <Share2 className="w-4 h-4" />
-              <span>Footer Sosyal Medya Bağlantıları (Sırala / Ekle / Düzenle / Sil)</span>
-            </div>
 
-            <form onSubmit={handleSaveSocial} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <select
-                value={socPlatform}
-                onChange={(e) => setSocPlatform(e.target.value as SocialMediaLinkItem['platform'])}
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-bold"
-              >
-                {(['Instagram', 'Facebook', 'YouTube', 'TikTok', 'WhatsApp', 'Google Maps'] as const).map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              <input
-                type="text"
-                required
-                value={socHandle}
-                onChange={(e) => setSocHandle(e.target.value)}
-                placeholder="Hesap Etiketi (@oztikeciger)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-              <input
-                type="text"
-                required
-                value={socUrl}
-                onChange={(e) => setSocUrl(e.target.value)}
-                placeholder="URL (https://...)"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
-              >
-                {editingSocId ? 'Hesabı Güncelle' : '+ Sosyal Medya Ekle'}
-              </button>
-            </form>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {siteCmsConfig.socialMedia.map((soc, idx) => (
-                <div
-                  key={soc.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex items-center justify-between gap-2"
-                >
-                  <div className="min-w-0">
-                    <div className="font-bold">#{idx + 1} · {soc.platform}</div>
-                    <div className="text-[11px] text-neutral-500 truncate">
-                      {soc.handleOrLabel} · {soc.url}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleMoveSocial(idx, -1)}
-                      disabled={idx === 0}
-                      className="p-1 rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-30 cursor-pointer"
-                      aria-label={`${soc.platform} yukarı taşı`}
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleMoveSocial(idx, 1)}
-                      disabled={idx === siteCmsConfig.socialMedia.length - 1}
-                      className="p-1 rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-30 cursor-pointer"
-                      aria-label={`${soc.platform} aşağı taşı`}
-                    >
-                      <ArrowDown className="w-3 h-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingSocId(soc.id);
-                        setSocPlatform(soc.platform);
-                        setSocHandle(soc.handleOrLabel);
-                        setSocUrl(soc.url);
-                      }}
-                      className="text-[#B86B35] font-semibold cursor-pointer"
-                    >
-                      Düzenle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onUpdateSiteCmsConfig((prev) => ({
-                          ...prev,
-                          socialMedia: prev.socialMedia.filter((s) => s.id !== soc.id),
-                        }));
-                        onNotify('Sosyal medya silindi.');
-                      }}
-                      className="text-rose-500 font-semibold cursor-pointer"
-                    >
-                      Sil
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* İletişim & Footer Yönetimi */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <Phone className="w-4 h-4" />
-              <span>Footer & Sıralı İletişim Bilgileri Yönetimi</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block font-semibold mb-1">Gösterilen Telefon</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.contact.phoneDisplay}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      contact: { ...prev.contact, phoneDisplay: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">WhatsApp Numarası</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.contact.whatsappRaw}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      contact: { ...prev.contact, whatsappRaw: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Kurumsal E-posta</label>
-                <input
-                  type="email"
-                  value={siteCmsConfig.contact.email}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      contact: { ...prev.contact, email: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Açık Adres (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.contact.addressTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      contact: { ...prev.contact, addressTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Çalışma Saatleri (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.contact.workingHoursTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      contact: { ...prev.contact, workingHoursTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Footer Telif Metni (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.footer.copyrightTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      footer: { ...prev.footer, copyrightTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block font-semibold mb-1">Footer Hakkında Kısa Metni (TR)</label>
-              <textarea
-                rows={2}
-                value={siteCmsConfig.footer.aboutTr}
-                onChange={(e) =>
-                  onUpdateSiteCmsConfig((prev) => ({
-                    ...prev,
-                    footer: { ...prev.footer, aboutTr: e.target.value },
-                  }))
-                }
-                className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-5">
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.footer.showSocialIcons}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      footer: { ...prev.footer, showSocialIcons: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Footer’da Sosyal Medya Bağlantılarını Göster</span>
-              </label>
-              <label className="inline-flex items-center gap-2 cursor-pointer font-semibold">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.footer.showAdminLoginButton}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      footer: { ...prev.footer, showAdminLoginButton: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Site En Altında "Yönetici Girişi" Butonunu Göster</span>
-              </label>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* =====================================================================
           SEKME 5A: GELİŞMİŞ PROFESYONEL SİSTEM GENEL AYARLARI
@@ -3333,111 +4123,562 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
       )}
 
       {/* =====================================================================
-          SEKME 5B: SEO AYARLARI
+          SEKME 5B: GELİŞMİŞ SEO, SAĞLIK SKORU, GOOGLE SERP, SCHEMA JSON-LD & SITEMAP
       ===================================================================== */}
-      {(activeTab === 'seo_only' || activeTab === 'seo_modules_general') && (
-        <div className="space-y-6">
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-            <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
-              <Globe className="w-4 h-4" />
-              <span>Çok Dilli SEO Meta Başlık, Açıklama & Schema.org Ayarları</span>
+      {(activeTab === 'seo_only' || activeTab === 'seo_modules_general') && (() => {
+        const seo = siteCmsConfig.seo;
+        const updateSeo = (patch: Partial<SiteCmsConfig['seo']>) =>
+          onUpdateSiteCmsConfig((prev) => ({
+            ...prev,
+            seo: { ...prev.seo, ...patch },
+          }));
+
+        const keywordList = (seo.keywords || '')
+          .split(',')
+          .map((k) => k.trim())
+          .filter(Boolean);
+
+        const health = calculateSeoHealthScore(seo);
+        const liveJsonLd = buildRestaurantJsonLd({
+          brandTitle: siteCmsConfig.header.brandTitle,
+          seo,
+          address: siteCmsConfig.contact.addressTr,
+          phone: siteCmsConfig.contact.phoneDisplay,
+        });
+
+        const liveSitemapXml =
+          seo.sitemapXml ||
+          buildFullSitemapXml({
+            canonicalUrl: seo.canonicalUrl,
+            categorySlugs: categories.map((c) => c.slug),
+            pageSlugs: cmsPages.map((p) => p.slug),
+          });
+
+        const liveRobotsTxt = seo.robotsTxt || buildRobotsTxt(seo.canonicalUrl, seo.robots !== 'noindex, nofollow');
+
+        return (
+          <div className="space-y-6 text-xs">
+            {/* Üst SEO Sağlık Skoru + Hızlı Otomatik Üreticiler */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <div
+                data-testid="seo-health-score-card"
+                className="lg:col-span-5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-bold text-sm flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-[#B86B35]" />
+                    <span>SEO Sağlık Skoru</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-extrabold text-lg text-[#B86B35] dark:text-[#D4AF6A]">
+                      {health.score}/100
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                        health.score >= 85
+                          ? 'bg-emerald-500/20 text-emerald-500'
+                          : health.score >= 65
+                          ? 'bg-amber-500/20 text-amber-500'
+                          : 'bg-rose-500/20 text-rose-500'
+                      }`}
+                    >
+                      {health.grade}
+                    </span>
+                  </div>
+                </div>
+                <div className="h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#B86B35] to-emerald-500 transition-all"
+                    style={{ width: `${health.score}%` }}
+                  />
+                </div>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {health.checks.map((chk) => (
+                    <div key={chk.id} className="flex items-start gap-2 text-[11px]">
+                      {chk.passed ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                      )}
+                      <div className="min-w-0">
+                        <span className="font-semibold">{chk.label}</span>
+                        {!chk.passed && <div className="text-[10px] text-neutral-500">{chk.hint}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Google SERP Canlı Arama Önizlemesi */}
+              <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3 flex flex-col justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                    <Search className="w-4 h-4" />
+                    <span>Google Arama Sonucu (SERP) Canlı Önizleme</span>
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-testid="seo-apply-preset-btn"
+                      onClick={() => {
+                        const generatedSitemap = buildFullSitemapXml({
+                          canonicalUrl: 'https://oztikeciger.com.tr/',
+                          categorySlugs: categories.map((c) => c.slug),
+                          pageSlugs: cmsPages.map((p) => p.slug),
+                        });
+                        const generatedRobots = buildRobotsTxt('https://oztikeciger.com.tr/', true);
+                        updateSeo({
+                          metaTitleTr: 'ÖzTike Ciğer – Gaziantep Ocakbaşı & Kuzu Ciğer Şiş',
+                          metaTitleEn: 'ÖzTike Ciğer – Authentic Gaziantep Charcoal Grill',
+                          metaTitleAr: 'أوز تيكي جيجر – مشويات غازي عنتاب الأصيلة',
+                          metaDescriptionTr:
+                            'Gaziantep Şahinbey’de meşe kömüründe günlük taze kuzu ciğer şiş, zırh kebabı, taş fırın lahmacun ve hızlı online QR sipariş.',
+                          metaDescriptionEn:
+                            'Authentic Gaziantep oak-charcoal lamb liver skewers, hand-minced Adana kebab, stone-oven lahmacun and fast online ordering.',
+                          metaDescriptionAr:
+                            'مشويات الكبد الطازج على فحم البلوط وكباب أضنة واللحمعجون في غازي عنتاب.',
+                          keywords:
+                            'öztike ciğer, gaziantep ciğerci, kuzu ciğer şiş, zırh kebabı, şahinbey ocakbaşı, taş fırın lahmacun, online yemek siparişi, halil usta ciğer',
+                          canonicalUrl: 'https://oztikeciger.com.tr/',
+                          ogImageUrl: '/assets/aistudio/crops/branded-ocakbasi.jpg',
+                          robots: 'index, follow',
+                          schemaType: 'Restaurant',
+                          servesCuisine: 'Turkish, Gaziantep Ocakbaşı, Kuzu Ciğer',
+                          priceRange: '₺₺',
+                          openingHoursSpec: 'Mo-Su 11:00-24:00',
+                          sitemapXml: generatedSitemap,
+                          robotsTxt: generatedRobots,
+                          hreflangEnabled: true,
+                        });
+                        onNotify('Tam Gaziantep Restoran SEO Paketi + Sitemap + Robots uygulandı.');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                    >
+                      Hazır Restoran SEO Paketi Uygula
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-white text-neutral-900 p-4 border border-neutral-200 space-y-1 shadow-sm">
+                  <div className="flex items-center gap-2 text-[11px] text-neutral-600">
+                    <img src={siteCmsConfig.header.logoUrl} alt="Favicon" className="w-4 h-4 rounded-full object-contain bg-neutral-900" />
+                    <span className="font-mono truncate">{seo.canonicalUrl || 'https://oztikeciger.com.tr/'}</span>
+                  </div>
+                  <div className="text-base font-semibold text-[#1A0DAB] leading-snug line-clamp-1">
+                    {seo.metaTitleTr || 'ÖzTike Ciğer – Gaziantep Ocakbaşı'}
+                  </div>
+                  <div className="text-xs text-[#4D5156] line-clamp-2 leading-relaxed">
+                    {seo.metaDescriptionTr}
+                  </div>
+                  {seo.ratingValue && (
+                    <div className="text-[11px] text-amber-600 font-semibold pt-0.5">
+                      ★★★★★ {seo.ratingValue} ({seo.reviewCount || 412} değerlendirme) · {seo.priceRange || '₺₺'} · {seo.servesCuisine || 'Türk Mutfağı'}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 text-[11px] text-neutral-500">
+                  <span>TR Başlık: <strong>{(seo.metaTitleTr || '').length}</strong>/60 kar.</span>
+                  <span>TR Açıklama: <strong>{(seo.metaDescriptionTr || '').length}</strong>/160 kar.</span>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold text-neutral-700 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      checked={seo.hreflangEnabled !== false}
+                      onChange={(e) => updateSeo({ hreflangEnabled: e.target.checked })}
+                    />
+                    <span>Çoklu Dil (hreflang TR/EN/AR) Aktif</span>
+                  </label>
+                </div>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block font-semibold mb-1">SEO Başlığı (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.seo.metaTitleTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      seo: { ...prev.seo, metaTitleTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Sol 7 Sütun: Meta Başlık, Açıklama, Keywords Tag, Arama Motorları & Schema.org Alanları */}
+              <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">SEO Başlığı (TR)</label>
+                    <input
+                      type="text"
+                      value={seo.metaTitleTr}
+                      onChange={(e) => updateSeo({ metaTitleTr: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">SEO Title (EN)</label>
+                    <input
+                      type="text"
+                      value={seo.metaTitleEn}
+                      onChange={(e) => updateSeo({ metaTitleEn: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">عنوان SEO (AR)</label>
+                    <input
+                      type="text"
+                      value={seo.metaTitleAr}
+                      onChange={(e) => updateSeo({ metaTitleAr: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Meta Açıklama (TR)</label>
+                    <textarea
+                      rows={2}
+                      value={seo.metaDescriptionTr}
+                      onChange={(e) => updateSeo({ metaDescriptionTr: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Meta Description (EN)</label>
+                    <textarea
+                      rows={2}
+                      value={seo.metaDescriptionEn}
+                      onChange={(e) => updateSeo({ metaDescriptionEn: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">وصف ميتا (AR)</label>
+                    <textarea
+                      rows={2}
+                      value={seo.metaDescriptionAr}
+                      onChange={(e) => updateSeo({ metaDescriptionAr: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                    />
+                  </div>
+                </div>
+
+                {/* Meta Keywords & Tag Yöneticisi */}
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-3.5 space-y-2.5">
+                  <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A]">
+                    Meta Keywords &amp; Etiketler ({keywordList.length} Etiket)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {keywordList.map((kw) => (
+                      <span
+                        key={kw}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-[#1F1F1D] border border-neutral-300 dark:border-neutral-700 font-medium"
+                      >
+                        <span>#{kw}</span>
+                        <button
+                          type="button"
+                          onClick={() => updateSeo({ keywords: keywordList.filter((item) => item !== kw).join(', ') })}
+                          className="text-rose-500 font-bold cursor-pointer"
+                          aria-label={`${kw} etiketini sil`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      data-testid="seo-add-keyword-input"
+                      value={newKeywordTag}
+                      onChange={(e) => setNewKeywordTag(e.target.value)}
+                      placeholder="Yeni SEO anahtar kelimesi ekle..."
+                      className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                    />
+                    <button
+                      type="button"
+                      data-testid="seo-add-keyword-btn"
+                      onClick={() => {
+                        if (!newKeywordTag.trim()) return;
+                        updateSeo({
+                          keywords: Array.from(new Set([...keywordList, newKeywordTag.trim()])).join(', '),
+                        });
+                        setNewKeywordTag('');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                    >
+                      + Etiket Ekle
+                    </button>
+                  </div>
+                </div>
+
+                {/* Schema.org Restoran Yapısal Verileri */}
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3.5 space-y-3">
+                  <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-2">
+                    <Code2 className="w-4 h-4" />
+                    <span>Schema.org Zengin Sonuçlar (JSON-LD Alanları)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block font-semibold mb-1">Schema.org Tipi</label>
+                      <select
+                        value={seo.schemaType}
+                        onChange={(e) =>
+                          updateSeo({ schemaType: e.target.value as SiteCmsConfig['seo']['schemaType'] })
+                        }
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      >
+                        <option value="Restaurant">Restaurant</option>
+                        <option value="FoodEstablishment">FoodEstablishment</option>
+                        <option value="LocalBusiness">LocalBusiness</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Mutfak Türü (servesCuisine)</label>
+                      <input
+                        type="text"
+                        value={seo.servesCuisine || ''}
+                        onChange={(e) => updateSeo({ servesCuisine: e.target.value })}
+                        placeholder="Turkish, Gaziantep Ocakbaşı"
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Fiyat Segmenti (priceRange)</label>
+                      <input
+                        type="text"
+                        value={seo.priceRange || '₺₺'}
+                        onChange={(e) => updateSeo({ priceRange: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Çalışma Saatleri (Schema)</label>
+                      <input
+                        type="text"
+                        value={seo.openingHoursSpec || 'Mo-Su 11:00-24:00'}
+                        onChange={(e) => updateSeo({ openingHoursSpec: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Ortalama Puan &amp; Yorum</label>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={1}
+                          max={5}
+                          value={seo.ratingValue ?? 4.9}
+                          onChange={(e) => updateSeo({ ratingValue: Number(e.target.value) })}
+                          className="w-1/2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1.5 font-mono"
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={seo.reviewCount ?? 412}
+                          onChange={(e) => updateSeo({ reviewCount: Number(e.target.value) })}
+                          className="w-1/2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1.5 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Posta Kodu &amp; Rezervasyon</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={seo.postalCode || '27010'}
+                          onChange={(e) => updateSeo({ postalCode: e.target.value })}
+                          className="w-24 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1.5 font-mono"
+                        />
+                        <label className="inline-flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={seo.acceptsReservations !== false}
+                            onChange={(e) => updateSeo({ acceptsReservations: e.target.checked })}
+                          />
+                          <span>Rezervasyon</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Arama Motorları Doğrulama & İndeksleme */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Google Search Console</label>
+                    <input
+                      type="text"
+                      value={seo.googleVerification || ''}
+                      onChange={(e) => updateSeo({ googleVerification: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Bing Webmaster</label>
+                    <input
+                      type="text"
+                      value={seo.bingVerification || ''}
+                      onChange={(e) => updateSeo({ bingVerification: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Yandex Webmaster</label>
+                    <input
+                      type="text"
+                      value={seo.yandexVerification || ''}
+                      onChange={(e) => updateSeo({ yandexVerification: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold mb-1">Canonical URL</label>
+                    <input
+                      type="text"
+                      value={seo.canonicalUrl}
+                      onChange={(e) => updateSeo({ canonicalUrl: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Robots Direktifi</label>
+                    <select
+                      value={seo.robots}
+                      onChange={(e) => updateSeo({ robots: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                    >
+                      <option value="index, follow">index, follow</option>
+                      <option value="noindex, nofollow">noindex, nofollow</option>
+                    </select>
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="block font-semibold mb-1">SEO Title (EN)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.seo.metaTitleEn}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      seo: { ...prev.seo, metaTitleEn: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">عنوان SEO (AR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.seo.metaTitleAr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      seo: { ...prev.seo, metaTitleAr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Anahtar Kelimeler</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.seo.keywords}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      seo: { ...prev.seo, keywords: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Canonical URL</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.seo.canonicalUrl}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      seo: { ...prev.seo, canonicalUrl: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Schema.org Tipi</label>
-                <select
-                  value={siteCmsConfig.seo.schemaType}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      seo: {
-                        ...prev.seo,
-                        schemaType: e.target.value as SiteCmsConfig['seo']['schemaType'],
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+
+              {/* Sağ 5 Sütun: Sosyal Medya OG Kart + Sitemap.xml + Robots.txt + JSON-LD */}
+              <div className="lg:col-span-5 space-y-4">
+                <div
+                  data-testid="seo-social-card-preview"
+                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3"
                 >
-                  <option value="Restaurant">Restaurant</option>
-                  <option value="FoodEstablishment">FoodEstablishment</option>
-                  <option value="LocalBusiness">LocalBusiness</option>
-                </select>
+                  <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A]">
+                    Sosyal Medya Kartı (OpenGraph &amp; Twitter)
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'Ocakbaşı', url: '/assets/aistudio/crops/branded-ocakbasi.jpg' },
+                      { label: 'Salon', url: '/assets/aistudio/crops/branded-dining.jpg' },
+                      { label: 'Lahmacun', url: '/assets/aistudio/crops/branded-doner-lahmacun.jpg' },
+                    ].map((img) => (
+                      <button
+                        key={img.url}
+                        type="button"
+                        onClick={() => updateSeo({ ogImageUrl: img.url })}
+                        className={`p-1 rounded-lg border text-center cursor-pointer ${
+                          seo.ogImageUrl === img.url
+                            ? 'border-[#B86B35] bg-[#B86B35]/15'
+                            : 'border-neutral-200 dark:border-neutral-800'
+                        }`}
+                      >
+                        <img src={img.url} alt={img.label} className="w-full h-11 object-cover rounded mb-1" />
+                        <span className="text-[10px] font-semibold">{img.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rounded-xl overflow-hidden border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413]">
+                    <img
+                      src={seo.ogImageUrl || '/assets/aistudio/crops/branded-ocakbasi.jpg'}
+                      alt={seo.ogImageAlt || 'OG Preview'}
+                      className="w-full h-32 object-cover"
+                    />
+                    <div className="p-3 space-y-1">
+                      <div className="text-[10px] font-mono uppercase text-neutral-500">
+                        {seo.canonicalUrl} · {seo.twitterSite}
+                      </div>
+                      <div className="font-bold text-xs line-clamp-1">{seo.metaTitleTr}</div>
+                      <div className="text-[11px] text-neutral-500 line-clamp-2">{seo.metaDescriptionTr}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dinamik Sitemap.xml Oluşturucu & İndirme */}
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-bold text-xs">Dinamik Sitemap.xml ({categories.length} Kategori + {cmsPages.length} Sayfa)</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        data-testid="seo-regenerate-sitemap-btn"
+                        onClick={() => {
+                          const xml = buildFullSitemapXml({
+                            canonicalUrl: seo.canonicalUrl,
+                            categorySlugs: categories.map((c) => c.slug),
+                            pageSlugs: cmsPages.map((p) => p.slug),
+                          });
+                          updateSeo({ sitemapXml: xml });
+                          onNotify('Tüm kategori ve sayfalar için sitemap.xml güncellendi.');
+                        }}
+                        className="px-2.5 py-1 rounded border border-[#B86B35]/50 text-[#B86B35] font-bold cursor-pointer"
+                      >
+                        Otomatik Üret
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const blob = new Blob([liveSitemapXml], { type: 'application/xml' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = 'sitemap.xml';
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#B86B35] text-white font-semibold cursor-pointer"
+                      >
+                        <Download className="w-3 h-3" /> İndir
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    rows={5}
+                    value={liveSitemapXml}
+                    onChange={(e) => updateSeo({ sitemapXml: e.target.value })}
+                    className="w-full rounded-lg bg-[#141413] text-emerald-300 p-2.5 font-mono text-[10px]"
+                  />
+                </div>
+
+                {/* Robots.txt & Canlı JSON-LD Önizleme */}
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs">Robots.txt &amp; Canlı JSON-LD</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateSeo({
+                          robotsTxt: buildRobotsTxt(seo.canonicalUrl, seo.robots !== 'noindex, nofollow'),
+                        });
+                        onNotify('Robots.txt yenilendi.');
+                      }}
+                      className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                    >
+                      Robots Yenile
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={liveRobotsTxt}
+                    onChange={(e) => updateSeo({ robotsTxt: e.target.value })}
+                    className="w-full rounded-lg bg-[#141413] text-amber-200 p-2 font-mono text-[10px]"
+                  />
+                  <details className="text-[11px]">
+                    <summary className="cursor-pointer font-semibold text-[#B86B35] dark:text-[#D4AF6A]">
+                      Canlı Schema.org JSON-LD Önizlemesini Göster
+                    </summary>
+                    <pre className="mt-2 rounded-lg bg-[#141413] text-sky-300 p-2.5 font-mono text-[10px] overflow-x-auto max-h-40">
+                      {liveJsonLd}
+                    </pre>
+                  </details>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* =====================================================================
           SEKME 5C: MODÜL, BİLEŞEN VE EKLENTİ MERKEZİ
@@ -3526,73 +4767,283 @@ export const AdminSiteBuilderManager: React.FC<AdminSiteBuilderManagerProps> = (
             </form>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {siteCmsConfig.modules.widgets.map((w) => (
-                <div
-                  key={w.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 flex items-center justify-between gap-3"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A] font-bold text-[10px]">
-                        {w.category}
-                      </span>
-                      <span className="font-bold">{w.name}</span>
+              {siteCmsConfig.modules.widgets.map((w) => {
+                const isExpanded = expandedWdgId === w.id;
+                const settingsObj = w.settings || {};
+                const settingEntries = Object.entries(settingsObj);
+                return (
+                  <div
+                    key={w.id}
+                    className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 space-y-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2 py-0.5 rounded bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A] font-bold text-[10px]">
+                            {w.category}
+                          </span>
+                          <span className="font-bold">{w.name}</span>
+                          {w.placement && (
+                            <span className="px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-mono">
+                              {w.placement}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-neutral-500 mt-1">{w.description}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              modules: {
+                                ...prev.modules,
+                                widgets: prev.modules.widgets.map((x) =>
+                                  x.id === w.id ? { ...x, isActive: !x.isActive } : x
+                                ),
+                              },
+                            }));
+                            onNotify(`${w.name} durumu değiştirildi.`);
+                          }}
+                          className={`px-2.5 py-1 rounded font-bold cursor-pointer ${
+                            w.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
+                          }`}
+                        >
+                          {w.isActive ? 'Aktif' : 'Pasif'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedWdgId(isExpanded ? null : w.id)}
+                          className="px-2 py-1 rounded border border-[#B86B35]/40 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Sliders className="w-3 h-3" />
+                          <span>{isExpanded ? 'Gizle' : 'Gelişmiş Ayar'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingWdgId(w.id);
+                            setWdgName(w.name);
+                            setWdgCategory(w.category);
+                            setWdgDesc(w.description);
+                          }}
+                          className="text-[#B86B35] font-semibold cursor-pointer"
+                        >
+                          Düzenle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSiteCmsConfig((prev) => ({
+                              ...prev,
+                              modules: {
+                                ...prev.modules,
+                                widgets: prev.modules.widgets.filter((x) => x.id !== w.id),
+                              },
+                            }));
+                            onNotify(`${w.name} silindi.`);
+                          }}
+                          className="text-rose-500 p-1 cursor-pointer"
+                          aria-label={`${w.name} sil`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-neutral-500 mt-1">{w.description}</p>
+
+                    {isExpanded && (
+                      <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 space-y-2.5 bg-neutral-50 dark:bg-[#141413] p-3 rounded-lg">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                              Konum (Placement)
+                            </label>
+                            <select
+                              value={w.placement || 'global'}
+                              onChange={(e) => {
+                                const placement = e.target.value as CustomPluginWidgetItem['placement'];
+                                onUpdateSiteCmsConfig((prev) => ({
+                                  ...prev,
+                                  modules: {
+                                    ...prev.modules,
+                                    widgets: prev.modules.widgets.map((x) =>
+                                      x.id === w.id ? { ...x, placement } : x
+                                    ),
+                                  },
+                                }));
+                              }}
+                              className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 text-xs"
+                            >
+                              <option value="global">Global (Tüm Sayfa)</option>
+                              <option value="header">Üst Bar (Header)</option>
+                              <option value="hero">Hero Vitrin</option>
+                              <option value="menu">Menü Alanı</option>
+                              <option value="footer">Alt Bölüm (Footer)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                              Bileşen Sürümü
+                            </label>
+                            <input
+                              type="text"
+                              value={w.version || 'v1.0.0'}
+                              onChange={(e) => {
+                                const version = e.target.value;
+                                onUpdateSiteCmsConfig((prev) => ({
+                                  ...prev,
+                                  modules: {
+                                    ...prev.modules,
+                                    widgets: prev.modules.widgets.map((x) =>
+                                      x.id === w.id ? { ...x, version } : x
+                                    ),
+                                  },
+                                }));
+                              }}
+                              className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 text-xs font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        {settingEntries.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                              Bileşen Parametreleri
+                            </div>
+                            {settingEntries.map(([key, val]) => (
+                              <div key={key} className="flex items-center gap-2">
+                                <span className="w-36 truncate font-mono text-[11px] text-neutral-500">
+                                  {key}
+                                </span>
+                                {typeof val === 'boolean' ? (
+                                  <label className="inline-flex items-center gap-1.5 cursor-pointer flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={val}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        onUpdateSiteCmsConfig((prev) => ({
+                                          ...prev,
+                                          modules: {
+                                            ...prev.modules,
+                                            widgets: prev.modules.widgets.map((x) =>
+                                              x.id === w.id
+                                                ? { ...x, settings: { ...(x.settings || {}), [key]: checked } }
+                                                : x
+                                            ),
+                                          },
+                                        }));
+                                      }}
+                                    />
+                                    <span className="text-xs font-semibold">{val ? 'Açık' : 'Kapalı'}</span>
+                                  </label>
+                                ) : (
+                                  <input
+                                    type={typeof val === 'number' ? 'number' : 'text'}
+                                    value={String(val)}
+                                    onChange={(e) => {
+                                      const nextVal =
+                                        typeof val === 'number' ? Number(e.target.value) : e.target.value;
+                                      onUpdateSiteCmsConfig((prev) => ({
+                                        ...prev,
+                                        modules: {
+                                          ...prev.modules,
+                                          widgets: prev.modules.widgets.map((x) =>
+                                            x.id === w.id
+                                              ? { ...x, settings: { ...(x.settings || {}), [key]: nextVal } }
+                                              : x
+                                          ),
+                                        },
+                                      }));
+                                    }}
+                                    className="flex-1 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 text-xs"
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateSiteCmsConfig((prev) => ({
+                                      ...prev,
+                                      modules: {
+                                        ...prev.modules,
+                                        widgets: prev.modules.widgets.map((x) => {
+                                          if (x.id !== w.id) return x;
+                                          const copy = { ...(x.settings || {}) };
+                                          delete copy[key];
+                                          return { ...x, settings: copy };
+                                        }),
+                                      },
+                                    }));
+                                  }}
+                                  className="text-rose-500 p-1 cursor-pointer"
+                                  aria-label={`${key} parametresini sil`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <input
+                            type="text"
+                            value={newWdgParamKey}
+                            onChange={(e) => setNewWdgParamKey(e.target.value)}
+                            placeholder="Parametre anahtarı (örn: maxItems)"
+                            className="flex-1 min-w-[120px] rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 text-xs font-mono"
+                          />
+                          <input
+                            type="text"
+                            value={newWdgParamVal}
+                            onChange={(e) => setNewWdgParamVal(e.target.value)}
+                            placeholder="Değer"
+                            className="flex-1 min-w-[100px] rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!newWdgParamKey.trim()) return;
+                              const parsed: string | number | boolean =
+                                newWdgParamVal === 'true'
+                                  ? true
+                                  : newWdgParamVal === 'false'
+                                  ? false
+                                  : newWdgParamVal !== '' && !Number.isNaN(Number(newWdgParamVal))
+                                  ? Number(newWdgParamVal)
+                                  : newWdgParamVal;
+                              onUpdateSiteCmsConfig((prev) => ({
+                                ...prev,
+                                modules: {
+                                  ...prev.modules,
+                                  widgets: prev.modules.widgets.map((x) =>
+                                    x.id === w.id
+                                      ? {
+                                          ...x,
+                                          settings: {
+                                            ...(x.settings || {}),
+                                            [newWdgParamKey.trim()]: parsed,
+                                          },
+                                        }
+                                      : x
+                                  ),
+                                },
+                              }));
+                              setNewWdgParamKey('');
+                              setNewWdgParamVal('');
+                              onNotify(`${w.name} ayarı eklendi.`);
+                            }}
+                            className="px-2.5 py-1 rounded bg-[#B86B35] text-white text-xs font-bold cursor-pointer"
+                          >
+                            + Ekle
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onUpdateSiteCmsConfig((prev) => ({
-                          ...prev,
-                          modules: {
-                            ...prev.modules,
-                            widgets: prev.modules.widgets.map((x) =>
-                              x.id === w.id ? { ...x, isActive: !x.isActive } : x
-                            ),
-                          },
-                        }));
-                        onNotify(`${w.name} durumu değiştirildi.`);
-                      }}
-                      className={`px-2.5 py-1 rounded font-bold cursor-pointer ${
-                        w.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-300 dark:bg-neutral-700'
-                      }`}
-                    >
-                      {w.isActive ? 'Aktif' : 'Pasif'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingWdgId(w.id);
-                        setWdgName(w.name);
-                        setWdgCategory(w.category);
-                        setWdgDesc(w.description);
-                      }}
-                      className="text-[#B86B35] font-semibold cursor-pointer"
-                    >
-                      Düzenle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onUpdateSiteCmsConfig((prev) => ({
-                          ...prev,
-                          modules: {
-                            ...prev.modules,
-                            widgets: prev.modules.widgets.filter((x) => x.id !== w.id),
-                          },
-                        }));
-                        onNotify(`${w.name} silindi.`);
-                      }}
-                      className="text-rose-500 p-1 cursor-pointer"
-                      aria-label={`${w.name} sil`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

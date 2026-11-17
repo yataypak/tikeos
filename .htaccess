@@ -1,4 +1,4 @@
-# ÖzTike Ciğer Restaurant OS - cPanel Apache Güvenlik ve Yönlendirme Yapılandırması
+# ÖzTike Ciğer Restaurant OS - Hostinger & cPanel Apache Güvenlik ve SPA Yönlendirme
 Options -Indexes
 ServerSignature Off
 
@@ -6,18 +6,18 @@ ServerSignature Off
     RewriteEngine On
     RewriteBase /
 
-    # Gizli dizinlere ve yapılandırma dosyalarına doğrudan erişimi engelle (Bölüm 25 Güvenlik)
+    # Hassas yapılandırma ve depolama dizinlerine doğrudan erişimi engelle
     RewriteRule ^(config|storage|database|app|modules|tests)/ - [F,L]
     RewriteRule ^(\.env|\.git|composer\.(json|lock)|VERSION) - [F,L]
 
-    # Kurulum kilitliyse install/ dizinine erişimi engelle (Bölüm 30)
+    # Kurulum kilitliyse install.php / install/ erişimini koru
     RewriteCond %{DOCUMENT_ROOT}/storage/install.lock -f
-    RewriteRule ^install/ - [F,L]
+    RewriteRule ^install\.php$ - [F,L]
 
-    # Statik dosyalar dışındaki istekleri ön denetleyiciye yönlendir
+    # Gerçek dosya veya dizin değilse React SPA index.html'e yönlendir
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^(.*)$ index.php [QSA,L]
+    RewriteRule ^(.*)$ index.html [QSA,L]
 </IfModule>
 
 <IfModule mod_headers.c>

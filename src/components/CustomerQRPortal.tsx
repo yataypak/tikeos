@@ -78,13 +78,17 @@ import {
   calculateCampaignDiscount,
   calculateCustomerCheckoutTotals,
   canAccessQrProtectedFeature,
+  canRequestBillForContext,
+  isBillRequestNeeds,
   getOrderProgressStep,
   formatWaiterDrinkQuantities,
+  resolveThemePaletteAndLayout,
   type ReservationItem,
   type WaiterServiceCallRecord,
 } from '../core/restaurantEngine';
-import { FooterPWACard } from './BrandIdentity';
+import { FooterPWACard, PWAInstallButton } from './BrandIdentity';
 import { RestaurantMapSection } from './RestaurantMapSection';
+import { printThermalReceipt } from '../utils/receiptPrinter';
 import {
   TRANSLATIONS,
   SUPPORTED_LANGUAGES,
@@ -111,12 +115,18 @@ export interface CustomerCartLine {
   customerNote: string;
 }
 
+export interface NotificationTarget {
+  type: 'menu' | 'product' | 'campaign' | 'gallery' | 'waiter' | 'cart' | 'member' | 'contact' | 'popup';
+  id?: string;
+}
+
 export interface LiveNotificationItem {
   id: string;
   title: string;
   detail: string;
   time: string;
   unread: boolean;
+  target?: NotificationTarget;
 }
 
 interface CustomerQRPortalProps {
@@ -138,7 +148,8 @@ interface CustomerQRPortalProps {
   lang?: SupportedLang;
   onChangeLang?: (lang: SupportedLang) => void;
   notifications?: LiveNotificationItem[];
-  onPushNotification?: (title: string, detail: string) => void;
+  onPushNotification?: (title: string, detail: string, target?: NotificationTarget) => void;
+  onMarkNotificationRead?: (id: string) => void;
   onMarkAllNotificationsRead?: () => void;
   onDismissNotification?: (id: string) => void;
   onClearNotifications?: () => void;
@@ -160,6 +171,10 @@ interface CustomerQRPortalProps {
     discountAmount?: number;
     couponCode?: string;
     paymentMethod?: string;
+    paymentType?: 'cash' | 'pos' | 'online_card' | 'meal_card' | 'transfer' | 'wallet';
+    payNow?: boolean;
+    cardHolderName?: string;
+    cardLast4?: string;
     tipAmount?: number;
     items: {
       product: ProductItem;
@@ -167,14 +182,20 @@ interface CustomerQRPortalProps {
       options: { name: string; value: string; extraPrice: number }[];
       customerNote: string;
     }[];
-  }) => { success: boolean; message: string; orderNumber?: string };
+  }) => {
+    success: boolean;
+    message: string;
+    orderNumber?: string;
+    paidNow?: boolean;
+    receiptNumber?: string;
+  };
   onSubmitWaiterServiceCall: (payload: {
     tableId: string;
     qrToken: string;
     selectedNeeds: string[];
     customNote: string;
   }) => { success: boolean; message: string };
-  onRequestBill: (tableId: string) => void;
+  onRequestBill: (tableId: string) => { success: boolean; message: string } | void;
   onRegisterMember?: (member: {
     name: string;
     phone: string;
@@ -313,6 +334,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
   onChangeLang,
   notifications: propNotifications,
   onPushNotification,
+  onMarkNotificationRead,
   onMarkAllNotificationsRead,
   onDismissNotification,
   onClearNotifications,
@@ -358,6 +380,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       detail: 'Sıcak tandır lavaşı ve 7 çeşit köz meze ikramımız masanıza hazırlanıyor.',
       time: 'Şimdi',
       unread: true,
+      target: { type: 'menu' },
     },
   ]);
   const [notifDropdownOpen, setNotifDropdownOpen] = useState<boolean>(false);
@@ -368,7 +391,12 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
   const activeNotifications = propNotifications ?? localNotifications;
   const unreadNotifCount = activeNotifications.filter((n) => n.unread).length;
 
-  const triggerCustomerNotification = (title: string, detail: string) => {
+  const triggerCustomerNotification = (
+    title: string,
+    detail: string,
+    target?: NotificationTarget,
+    skipGlobalAppend?: boolean
+  ) => {
     const nowStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     if (soundEnabled) {
       playNotificationChime();
@@ -384,18 +412,29 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       }
     }
     if (onPushNotification) {
-      onPushNotification(title, detail);
+      if (!skipGlobalAppend) {
+        onPushNotification(title, detail, target);
+      }
     } else {
       setLocalNotifications((prev) => [
         {
-          id: `NTF-${Date.now()}`,
+          id: `NTF-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           title,
           detail,
           time: nowStr,
           unread: true,
+          target,
         },
         ...prev,
       ]);
+    }
+  };
+
+  const handleMarkOneNotificationRead = (id: string) => {
+    if (onMarkNotificationRead) {
+      onMarkNotificationRead(id);
+    } else {
+      setLocalNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)));
     }
   };
 
@@ -577,7 +616,53 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
   const [deliveryAddress, setDeliveryAddress] = useState<string>(() => customerMember?.address || '');
   const [orderNote, setOrderNote] = useState<string>('');
   const [selectedCouponCode, setSelectedCouponCode] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<string>('Kapıda / Masada Kart (POS)');
+  const [payTiming, setPayTiming] = useState<'later' | 'now'>('later');
+  const [paymentMethod, setPaymentMethod] = useState<string>('Kasada / Masada Nakit');
+
+  const activePortalPaymentMethods = useMemo(() => {
+    const list =
+      siteCmsConfig.paymentMethods && siteCmsConfig.paymentMethods.length > 0
+        ? siteCmsConfig.paymentMethods
+        : INITIAL_SITE_CMS_CONFIG.paymentMethods || [];
+    return list.filter((pm) => pm.isActive && pm.allowOnCustomerPortal);
+  }, [siteCmsConfig.paymentMethods]);
+
+  const payLaterMethods = useMemo(
+    () => activePortalPaymentMethods.filter((pm) => !pm.allowPayNow),
+    [activePortalPaymentMethods]
+  );
+
+  const payNowMethods = useMemo(
+    () => activePortalPaymentMethods.filter((pm) => pm.allowPayNow),
+    [activePortalPaymentMethods]
+  );
+
+  useEffect(() => {
+    if (payNowMethods.length === 0 && payTiming === 'now') {
+      setPayTiming('later');
+      return;
+    }
+    if (payLaterMethods.length === 0 && payNowMethods.length > 0 && payTiming === 'later') {
+      setPayTiming('now');
+      return;
+    }
+    const pool = payTiming === 'now' ? payNowMethods : payLaterMethods;
+    if (pool.length > 0 && !pool.some((pm) => pm.name === paymentMethod)) {
+      setPaymentMethod(pool[0].name);
+    } else if (pool.length === 0 && activePortalPaymentMethods.length === 0) {
+      setPaymentMethod('');
+    }
+  }, [activePortalPaymentMethods, payLaterMethods, payNowMethods, payTiming, paymentMethod]);
+
+  const selectedPaymentObj = useMemo(
+    () => activePortalPaymentMethods.find((pm) => pm.name === paymentMethod) || null,
+    [activePortalPaymentMethods, paymentMethod]
+  );
+
+  const [cardHolderName, setCardHolderName] = useState<string>('');
+  const [cardNumberInput, setCardNumberInput] = useState<string>('');
+  const [cardExpiryInput, setCardExpiryInput] = useState<string>('');
+  const [cardCvvInput, setCardCvvInput] = useState<string>('');
   const [tipPercent, setTipPercent] = useState<0 | 5 | 10 | 15>(0);
   const [customTipInput, setCustomTipInput] = useState<string>('');
   const [lastPlacedOrderNumber, setLastPlacedOrderNumber] = useState<string | null>(null);
@@ -613,6 +698,68 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
   const [adminPasswordInput, setAdminPasswordInput] = useState<string>(
     siteCmsConfig.footer.adminDemoPassword
   );
+
+  // 9. Açılır Kapanır Popup Pencere Duyurusu
+  const [promoPopupOpen, setPromoPopupOpen] = useState<boolean>(false);
+  useEffect(() => {
+    const popup = siteCmsConfig.promoPopup;
+    if (!popup?.enabled) {
+      setPromoPopupOpen(false);
+      return;
+    }
+    if (popup.showOncePerSession) {
+      try {
+        if (sessionStorage.getItem('oztike_promo_popup_dismissed') === '1') {
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const trigger = popup.triggerType || 'delay';
+    if (trigger === 'immediate') {
+      setPromoPopupOpen(true);
+      return;
+    }
+    if (trigger === 'exit') {
+      const handleMouseLeave = (e: MouseEvent) => {
+        if (e.clientY <= 12) {
+          setPromoPopupOpen(true);
+          document.removeEventListener('mouseleave', handleMouseLeave);
+        }
+      };
+      document.addEventListener('mouseleave', handleMouseLeave);
+      return () => document.removeEventListener('mouseleave', handleMouseLeave);
+    }
+
+    const delayMs = Math.max(0, (popup.delaySeconds ?? 3) * 1000);
+    const timer = window.setTimeout(() => setPromoPopupOpen(true), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [
+    siteCmsConfig.promoPopup?.enabled,
+    siteCmsConfig.promoPopup?.triggerType,
+    siteCmsConfig.promoPopup?.delaySeconds,
+    siteCmsConfig.promoPopup?.showOncePerSession,
+  ]);
+
+  useEffect(() => {
+    const autoClose = siteCmsConfig.promoPopup?.autoCloseSeconds || 0;
+    if (!promoPopupOpen || autoClose <= 0) return;
+    const tmr = window.setTimeout(() => setPromoPopupOpen(false), autoClose * 1000);
+    return () => window.clearTimeout(tmr);
+  }, [promoPopupOpen, siteCmsConfig.promoPopup?.autoCloseSeconds]);
+
+  const dismissPromoPopup = () => {
+    setPromoPopupOpen(false);
+    if (siteCmsConfig.promoPopup?.showOncePerSession) {
+      try {
+        sessionStorage.setItem('oztike_promo_popup_dismissed', '1');
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   // Bildirim Toast
   const [toastBanner, setToastBanner] = useState<{
@@ -726,7 +873,6 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
         tableId: table.id,
         tableNumber: table.number,
         qrCodeNumber: table.qrCodeNumber,
-        qrToken: table.qrToken,
       }),
     }).catch(() => {});
 
@@ -751,7 +897,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       const titleMsg = `${table.qrCodeNumber} ${t.qrModal.qrSuccessToastTitle}`;
       const descMsg = `${sourceLabel}: ${table.number} (${table.area}) ${t.qrModal.qrSuccessToastDesc} ${table.waiterName}`;
       showToast('success', titleMsg, descMsg);
-      triggerCustomerNotification(titleMsg, descMsg);
+      triggerCustomerNotification(titleMsg, descMsg, { type: 'menu' });
     }, 300);
   };
 
@@ -1119,15 +1265,60 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
     showToast('success', nextMember.name, t.extras.memberWelcome);
   };
 
+  const tableSelectionEnabled = siteCmsConfig.operationalSettings?.tableSelectionEnabled === true;
+  const orderTrackingEnabled = siteCmsConfig.operationalSettings?.orderTrackingEnabled === true;
+  const requireQrScan =
+    tableSelectionEnabled && siteCmsConfig.operationalSettings?.qrRequireScan !== false;
+  const effectiveQrTableId = qrVerifiedTableId || (!requireQrScan ? activeTable?.id || null : null);
+
+  const openUnpaidBillCheck = useMemo(() => {
+    const unpaidOrders = activeTableOrders.filter(
+      (o) =>
+        o.status !== 'İptal edildi' &&
+        o.status !== 'İade edildi' &&
+        o.paymentStatus !== 'Ödendi'
+    );
+    const unpaidTotal = unpaidOrders.reduce(
+      (sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount),
+      0
+    );
+    const scopedTableBalance =
+      qrVerifiedTableId || tableSelectionEnabled ? activeTable?.openBalance || 0 : 0;
+    return canRequestBillForContext({
+      tableOpenBalance: scopedTableBalance,
+      unpaidOrdersCount: unpaidOrders.length,
+      unpaidOrdersTotal: unpaidTotal,
+    });
+  }, [activeTableOrders, activeTable, qrVerifiedTableId, tableSelectionEnabled]);
+
+  useEffect(() => {
+    if (!openUnpaidBillCheck.allowed && selectedWaiterNeeds.includes('w-hesap')) {
+      setSelectedWaiterNeeds((prev) => prev.filter((k) => k !== 'w-hesap'));
+    }
+  }, [openUnpaidBillCheck.allowed, selectedWaiterNeeds]);
+
   const handleCheckoutSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
 
-    const qrAccess = canAccessQrProtectedFeature(qrVerifiedTableId, channel);
+    const qrAccess = canAccessQrProtectedFeature(
+      effectiveQrTableId,
+      channel,
+      tableSelectionEnabled
+    );
     if (!qrAccess.allowed) {
       showToast('error', t.extras.qrRequiredTitle, t.extras.qrRequiredOrderDesc);
       setCartDrawerOpen(false);
       setQrModalOpen(true);
+      return;
+    }
+
+    if (activePortalPaymentMethods.length === 0 || !selectedPaymentObj) {
+      showToast(
+        'error',
+        'Ödeme Yöntemi Seçiniz',
+        'Sipariş verebilmek için yönetici panelinden en az bir ödeme yöntemi aktif olmalıdır.'
+      );
       return;
     }
 
@@ -1147,22 +1338,48 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       }
     }
 
+    const isPayNowRequested = payTiming === 'now' && selectedPaymentObj.allowPayNow;
+    const isCardPayNow =
+      isPayNowRequested && selectedPaymentObj.type === 'online_card';
+    let cardLast4: string | undefined;
+    if (isCardPayNow) {
+      const cleanCardDigits = cardNumberInput.replace(/\D/g, '');
+      const cleanCvv = cardCvvInput.replace(/\D/g, '');
+      if (cleanCardDigits.length < 12 || cleanCvv.length < 3 || !cardExpiryInput.trim()) {
+        showToast(
+          'error',
+          'Kart Bilgileri Eksik',
+          'Şimdi ödeme için geçerli kart numarası, SKT ve CVV girin veya "Test Kartı Doldur" düğmesini kullanın.'
+        );
+        return;
+      }
+      cardLast4 = cleanCardDigits.slice(-4);
+    }
+
     const res = onPlaceCustomerOrder({
-      tableId: qrVerifiedTableId || selectedTableId,
-      qrToken: qrVerifiedTableId ? activeTable?.qrToken || '' : '',
+      tableId: effectiveQrTableId || selectedTableId,
+      qrToken: '',
       channel,
       customerName:
         customerName.trim() ||
-        (channel === 'QR' ? activeTableNumberBadge : t.cartModal.channelDelivery),
+        (channel === 'QR'
+          ? tableSelectionEnabled
+            ? activeTableNumberBadge
+            : 'Hızlı Sipariş Misafiri'
+          : t.cartModal.channelDelivery),
       customerPhone: customerPhone.trim() || '-',
       deliveryAddress: channel === 'Paket servis' ? deliveryAddress.trim() : undefined,
       note: orderNote,
-      idempotencyKey: `QR-ORD-${qrVerifiedTableId || channel}-${Date.now()}`,
+      idempotencyKey: `QR-ORD-${effectiveQrTableId || channel}-${Date.now()}`,
       discountAmount: finalDiscountAmount,
       couponCode: appliedCampaign?.result.applicable
         ? appliedCampaign.campaign.couponCode
         : undefined,
-      paymentMethod,
+      paymentMethod: selectedPaymentObj.name,
+      paymentType: selectedPaymentObj.type,
+      payNow: isPayNowRequested,
+      cardHolderName: cardHolderName.trim() || customerName.trim() || undefined,
+      cardLast4,
       tipAmount: checkoutTotals.tipAmount,
       items: cart.map((c) => ({
         product: c.product,
@@ -1178,26 +1395,38 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       setOrderNote('');
       setTipPercent(0);
       setCustomTipInput('');
-      const titleMsg = `${t.cartModal.orderSuccessTitle} (#${res.orderNumber})`;
+      setCardNumberInput('');
+      setCardExpiryInput('');
+      setCardCvvInput('');
+      const paidTag = res.paidNow
+        ? `Ödendi (${cartFinalTotal.toFixed(2)} ₺${res.receiptNumber ? ` · Fiş: ${res.receiptNumber}` : ''})`
+        : `${selectedPaymentObj.name} · Ödeme Bekleniyor`;
+      const titleMsg = res.paidNow
+        ? `Ödeme Alındı & Sipariş İletildi (#${res.orderNumber})`
+        : `Siparişiniz Alındı (#${res.orderNumber})`;
       const descMsg =
         channel === 'QR'
-          ? `${activeTableNumberBadge} ${t.cartModal.orderSuccessDesc} · ${paymentMethod}`
-          : `${channel} · ${paymentMethod} · ${cartFinalTotal.toFixed(2)} ₺`;
+          ? `${tableSelectionEnabled ? activeTableNumberBadge : 'Hızlı Sipariş'} · ${paidTag}`
+          : `${channel} · ${paidTag} · ${cartFinalTotal.toFixed(2)} ₺`;
       showToast('success', titleMsg, descMsg);
-      triggerCustomerNotification(titleMsg, descMsg);
+      triggerCustomerNotification(titleMsg, descMsg, { type: 'cart' }, true);
     } else {
       showToast('error', 'Hata', res.message);
     }
   };
 
-  // Garson Çağır Gönder (Sadece QR Kod Okutan Masalar İçin Geçerli + Çay/Soda Adet Desteği)
+  // Garson Çağır Gönder (Hesap yoksa hesap isteme kesinlikle engellenir + Çay/Soda Adet Desteği)
   const totalWaiterDrinksCount = useMemo(
     () => Object.values(waiterDrinkQuantities).reduce((sum, q) => sum + (q > 0 ? q : 0), 0),
     [waiterDrinkQuantities]
   );
 
   const handleWaiterCallSubmit = () => {
-    const qrAccess = canAccessQrProtectedFeature(qrVerifiedTableId, 'waiter_call');
+    const qrAccess = canAccessQrProtectedFeature(
+      effectiveQrTableId,
+      'waiter_call',
+      tableSelectionEnabled
+    );
     if (!qrAccess.allowed || !activeTable) {
       setWaiterModalOpen(false);
       showToast('error', t.extras.qrRequiredTitle, t.extras.qrRequiredWaiterDesc);
@@ -1220,9 +1449,18 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
     const finalNeeds =
       combinedNeeds.length > 0 ? combinedNeeds : [t.waiterModal.needs['w-garson'].label];
 
+    if (isBillRequestNeeds(finalNeeds, waiterCustomNote) && !openUnpaidBillCheck.allowed) {
+      showToast(
+        'error',
+        'Açık Hesap Bulunmuyor',
+        openUnpaidBillCheck.reason || 'Hesap istemek için önce sipariş veriniz.'
+      );
+      return;
+    }
+
     const res = onSubmitWaiterServiceCall({
       tableId: activeTable.id,
-      qrToken: activeTable.qrToken,
+      qrToken: '',
       selectedNeeds: finalNeeds,
       customNote: waiterCustomNote,
     });
@@ -1234,7 +1472,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       const titleMsg = `${t.waiterModal.dispatchedTitle} (${activeTableNumberBadge})`;
       const descMsg = `${finalNeeds.join(', ')} — ${activeTable.waiterName}: ${t.waiterModal.dispatchedDesc}`;
       showToast('success', titleMsg, descMsg);
-      triggerCustomerNotification(titleMsg, descMsg);
+      triggerCustomerNotification(titleMsg, descMsg, { type: 'waiter' }, true);
     } else {
       showToast('error', 'Hata', res.message);
     }
@@ -1360,12 +1598,25 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       ? siteCmsConfig.footer.copyrightAr
       : siteCmsConfig.footer.copyrightTr;
 
+  const theme = useMemo(
+    () => resolveThemePaletteAndLayout(siteCmsConfig.design),
+    [siteCmsConfig.design]
+  );
+
   const primaryButtonClass =
-    siteCmsConfig.design.buttonStyle === 'emerald-accent'
+    theme.buttonStyle === 'emerald-accent'
       ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-      : siteCmsConfig.design.buttonStyle === 'copper-solid'
+      : theme.buttonStyle === 'copper-solid'
       ? 'bg-[#B86B35] hover:bg-[#9F5928] text-white'
       : 'bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] hover:brightness-110';
+
+  const primaryButtonStyle: React.CSSProperties = {
+    background:
+      theme.buttonStyle === 'gold-gradient'
+        ? `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`
+        : theme.primaryColor,
+    color: theme.ctaTextColor,
+  };
 
   const headerNavItems = siteCmsConfig.header.navMenus.filter(
     (m) => m.isActive && (m.location === 'header' || m.location === 'both')
@@ -1374,7 +1625,93 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
     (m) => m.isActive && (m.location === 'footer' || m.location === 'both')
   );
 
+  const handleNotificationClick = (n: LiveNotificationItem) => {
+    handleMarkOneNotificationRead(n.id);
+    setNotifDropdownOpen(false);
+
+    const resolveFallbackTarget = (): NotificationTarget => {
+      if (n.target) return n.target;
+      const combined = `${n.title} ${n.detail}`.toLocaleLowerCase('tr-TR');
+      if (/kampanya|kupon|indirim|fırsat/.test(combined)) return { type: 'campaign' };
+      if (/video|galeri|izle|tanıtım/.test(combined)) return { type: 'gallery' };
+      if (/garson|servis talep|çay|kahve/.test(combined)) return { type: 'waiter' };
+      if (/sipariş|hesap|sepet|ödeme/.test(combined)) return { type: 'cart' };
+      if (/yorum|şikayet|üye/.test(combined)) return { type: 'member' };
+      if (/adres|harita|konum|iletişim/.test(combined)) return { type: 'contact' };
+      if (/ciğer|kebap|döner|lahmacun|öneri/.test(combined)) return { type: 'product', id: products[0]?.id || 'PRD-01' };
+      return { type: 'menu' };
+    };
+
+    const resolved = resolveFallbackTarget();
+    const scrollToId = (elId: string) => {
+      window.setTimeout(() => {
+        const el = document.getElementById(elId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+    };
+
+    switch (resolved.type) {
+      case 'campaign':
+        if (siteCmsConfig.modules.campaignsSectionEnabled) {
+          scrollToId('kampanyalar');
+        } else {
+          setCartDrawerOpen(true);
+        }
+        break;
+      case 'product': {
+        const prod =
+          (resolved.id ? products.find((p) => p.id === resolved.id) : undefined) || products[0];
+        if (prod) {
+          openProductCustomizer(prod);
+        } else {
+          scrollToId('menu');
+        }
+        break;
+      }
+      case 'gallery':
+        scrollToId('galeri');
+        break;
+      case 'cart':
+        setCartDrawerOpen(true);
+        break;
+      case 'waiter': {
+        const check = canAccessQrProtectedFeature(
+          effectiveQrTableId,
+          'waiter_call',
+          tableSelectionEnabled
+        );
+        if (!check.allowed) {
+          setQrModalOpen(true);
+        } else {
+          setWaiterModalOpen(true);
+        }
+        break;
+      }
+      case 'member':
+        setMemberModalOpen(true);
+        break;
+      case 'contact':
+        scrollToId('iletisim');
+        break;
+      case 'popup':
+        setPromoPopupOpen(true);
+        break;
+      case 'menu':
+      default:
+        scrollToId('menu');
+        break;
+    }
+  };
+
   const handleNavAction = (url: string) => {
+    if (url === '/siparis-takibi' && !orderTrackingEnabled) {
+      showToast(
+        'error',
+        'Sipariş Takibi Pasif',
+        'Canlı sipariş takibi şu an yönetici tarafından pasif durumdadır.'
+      );
+      return;
+    }
     if (url.startsWith('/')) {
       const matchedPage = cmsPages.find((p) => p.slug === url);
       if (matchedPage) {
@@ -1384,74 +1721,36 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
     }
   };
 
-  // Açılır Pop-up Duyuru & Kampanya State
-  const [showPromoPopup, setShowPromoPopup] = useState(false);
-  const [copiedPromoCode, setCopiedPromoCode] = useState(false);
-
-  useEffect(() => {
-    if (siteCmsConfig.promoPopup?.enabled) {
-      try {
-        const hasSeen = sessionStorage.getItem('oztike_promo_seen');
-        if (siteCmsConfig.promoPopup.showOncePerSession && hasSeen) {
-          return;
-        }
-      } catch {
-        // ignore
-      }
-      const delay = Math.max(1, siteCmsConfig.promoPopup.delaySeconds || 2) * 1000;
-      const timer = setTimeout(() => {
-        setShowPromoPopup(true);
-      }, delay);
-      return () => clearTimeout(timer);
-    }
-  }, [siteCmsConfig.promoPopup]);
-
-  const handleDismissPromoPopup = () => {
-    setShowPromoPopup(false);
-    try {
-      sessionStorage.setItem('oztike_promo_seen', 'true');
-    } catch {
-      // ignore
-    }
+  const headerSurfaceStyle: React.CSSProperties = {
+    backgroundColor: theme.isLight ? 'rgba(246, 241, 231, 0.94)' : theme.backgroundColor,
+    borderColor: theme.borderColor,
+    color: theme.textPrimary,
   };
 
-  const handleCategorySelect = (catId: string) => {
-    setSelectedCategoryId(catId);
-    const menuSec = document.getElementById('menu');
-    if (menuSec) {
-      const rect = menuSec.getBoundingClientRect();
-      // Yalnızca menü yukarıda kalmışsa (aşağı kaydırmışsak), menüyü ekranın tepesine (sticky bar: 64px) hizala
-      // Anasayfanın en tepesine fırlatmaz, doğrudan kategori ürünlerinin başında kalır!
-      if (rect.top < 60) {
-        const targetScrollY = window.scrollY + rect.top - 64;
-        window.scrollTo({
-          top: Math.max(0, targetScrollY),
-          behavior: 'smooth',
-        });
-      }
-    }
-  };
+  const openTablesCount = tables.filter((tbl) => tbl.status === 'Boş').length;
 
   return (
     <div
       id="ust"
       dir={t.dir}
+      data-theme-variant={theme.id}
       style={{
-        backgroundColor: siteCmsConfig.design.backgroundColor || '#120806',
-        color: '#F9F2E7',
+        backgroundColor: theme.backgroundColor,
+        color: theme.textPrimary,
       }}
-      className="min-h-screen pb-28 selection:bg-[#D4A359] selection:text-[#1A0B08]"
+      className="min-h-screen pb-28 transition-colors duration-300"
     >
       {/* Üst Duyuru Bandı (Admin Panelden Tam Yönetilebilir) */}
       {siteCmsConfig.announcementBar.enabled && !announcementDismissed && (
         <div
           style={{
-            backgroundColor: siteCmsConfig.announcementBar.bgColor || '#2A120C',
-            color: siteCmsConfig.announcementBar.textColor || '#F6D79E',
+            backgroundColor: siteCmsConfig.announcementBar.bgColor || theme.surfaceAltColor,
+            color: siteCmsConfig.announcementBar.textColor || theme.textPrimary,
+            borderColor: theme.borderColor,
           }}
           className={`${
             siteCmsConfig.announcementBar.sticky ? 'sticky top-0 z-50' : 'relative z-40'
-          } border-b border-[#D4A359]/30 px-3 sm:px-6 py-2 text-[11px] sm:text-xs font-medium`}
+          } border-b px-3 sm:px-6 py-2 text-[11px] sm:text-xs font-medium`}
         >
           <div className="max-w-6xl mx-auto flex items-center justify-center gap-2.5 pe-6">
             {siteCmsConfig.announcementBar.badgeText && (
@@ -1486,9 +1785,10 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
           1. HEADER (DİNAMİK LOGO, MENÜLER, ÇOKLU DİL TR/EN/AR VE CANLI BİLDİRİMLER)
       ===================================================================== */}
       <header
+        style={headerSurfaceStyle}
         className={`${
           siteCmsConfig.header.stickyHeader ? 'sticky top-0' : ''
-        } z-40 bg-[#120806]/95 backdrop-blur-md border-b border-[#D4A359]/25`}
+        } z-40 backdrop-blur-md border-b`}
       >
         <div className="max-w-6xl mx-auto px-3.5 sm:px-6 h-16 flex items-center justify-between gap-2">
           {/* Sol: Şeffaf Arka Planlı ÖzTike Ciğer Logosu */}
@@ -1500,13 +1800,19 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 height: `${siteCmsConfig.header.logoHeightPx || 44}px`,
                 width: `${siteCmsConfig.header.logoHeightPx || 44}px`,
               }}
-              className="object-contain drop-shadow-[0_2px_10px_rgba(212,163,89,0.45)] shrink-0 group-hover:scale-105 transition-transform"
+              className="object-contain drop-shadow-[0_2px_10px_rgba(212,163,89,0.35)] shrink-0 group-hover:scale-105 transition-transform"
             />
             <div className="truncate">
-              <span className="font-editorial text-lg sm:text-xl font-bold tracking-tight text-[#F6D79E] block leading-none">
+              <span
+                style={{ color: theme.isLight ? theme.textPrimary : theme.primaryColor }}
+                className="font-editorial text-lg sm:text-xl font-bold tracking-tight block leading-none"
+              >
                 {siteCmsConfig.header.brandTitle}
               </span>
-              <span className="text-[10px] tracking-widest uppercase text-[#C9A87C] block mt-0.5">
+              <span
+                style={{ color: theme.textSecondary }}
+                className="text-[10px] tracking-widest uppercase block mt-0.5"
+              >
                 {brandSubtitleByLang}
               </span>
             </div>
@@ -1515,7 +1821,8 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
           {/* Orta: Admin Panelden Yönetilebilir Menü Öğeleri */}
           <nav
             aria-label="Site Bölümleri"
-            className="hidden lg:flex items-center gap-6 text-xs font-semibold text-[#DECAB4]"
+            style={{ color: theme.textSecondary }}
+            className="hidden lg:flex items-center gap-6 text-xs font-semibold"
           >
             {headerNavItems.map((nav) => (
               <a
@@ -1529,16 +1836,27 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     handleNavAction(nav.url);
                   }
                 }}
-                className="hover:text-[#F6D79E] transition-colors whitespace-nowrap"
+                className="hover:opacity-80 transition-opacity whitespace-nowrap"
               >
                 {getNavLabelByLang(nav, currentLang)}
               </a>
             ))}
           </nav>
 
-          {/* Sağ: Çoklu Dil Değiştirme İkonu (TR | EN | AR) + Çalışan Bildirim Merkezi + PWA Uygulama İndir */}
+          {/* Sağ: PWA Yükle + Çoklu Dil Değiştirme İkonu + Çalışan Bildirim Merkezi */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Çoklu Dil Değiştirme İkonu & Seçici (TR / EN / AR) */}
+            {siteCmsConfig.pwaSettings?.enabled &&
+              siteCmsConfig.pwaSettings?.showHeaderInstallBtn !== false && (
+                <div className="hidden sm:block">
+                  <PWAInstallButton
+                    compact
+                    themeTokens={theme}
+                    label={siteCmsConfig.pwaSettings.shortName || 'Yükle'}
+                  />
+                </div>
+              )}
+
+            {/* Çoklu Dil Değiştirme İkonu & Seçici */}
             {siteCmsConfig.header.showLanguageSwitcher && (
               <div className="relative">
                 <button
@@ -1547,34 +1865,47 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     setLangDropdownOpen(!langDropdownOpen);
                     setNotifDropdownOpen(false);
                   }}
-                  aria-label="Dil Seçimi (Türkçe / English / العربية)"
-                  className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl bg-[#24110D] hover:bg-[#311711] border border-[#D4A359]/45 text-xs font-bold text-[#F5D69B] transition-colors cursor-pointer"
+                  aria-label="Dil Seçimi"
+                  style={{
+                    backgroundColor: theme.surfaceAltColor,
+                    borderColor: theme.borderColor,
+                    color: theme.textPrimary,
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl border text-xs font-bold transition-colors cursor-pointer"
                 >
-                  <Globe className="w-4 h-4 text-[#D4A359] shrink-0" />
+                  <Globe className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />
                   <span>{t.langShort}</span>
-                  <span className="hidden md:inline text-[11px] font-normal text-[#DECAB4]">
+                  <span className="hidden md:inline text-[11px] font-normal opacity-80">
                     · {t.langName}
                   </span>
                 </button>
 
                 {langDropdownOpen && (
-                  <div className="absolute end-0 mt-2 w-52 rounded-2xl border border-[#D4A359]/45 bg-[#1A0B08] p-1.5 shadow-2xl z-50 space-y-1 max-h-80 overflow-y-auto">
+                  <div
+                    style={{
+                      backgroundColor: theme.surfaceColor,
+                      borderColor: theme.borderColor,
+                      color: theme.textPrimary,
+                    }}
+                    className="absolute end-0 mt-2 w-52 rounded-2xl border p-1.5 shadow-2xl z-50 space-y-1 max-h-80 overflow-y-auto"
+                  >
                     {SUPPORTED_LANGUAGES.map((item) => (
                       <button
                         key={item.code}
                         type="button"
                         onClick={() => handleSelectLanguage(item.code)}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                        style={
                           currentLang === item.code
-                            ? 'bg-[#D4A359] text-[#1A0B08]'
-                            : 'text-[#F6D79E] hover:bg-[#2A130E]'
-                        }`}
+                            ? { backgroundColor: theme.primaryColor, color: theme.ctaTextColor }
+                            : { color: theme.textPrimary }
+                        }
+                        className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-colors hover:opacity-90 cursor-pointer"
                       >
                         <span className="flex items-center gap-2">
                           <span>{item.flag}</span>
                           <span>{item.label}</span>
                         </span>
-                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/25">
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/15">
                           {item.short}
                         </span>
                       </button>
@@ -1594,9 +1925,14 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     setLangDropdownOpen(false);
                   }}
                   aria-label={`${t.header.notificationsTitle} (${unreadNotifCount})`}
-                  className="relative inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-[#24110D] hover:bg-[#311711] border border-[#D4A359]/35 text-xs font-bold text-[#F5D69B] transition-colors cursor-pointer"
+                  style={{
+                    backgroundColor: theme.surfaceAltColor,
+                    borderColor: theme.borderColor,
+                    color: theme.textPrimary,
+                  }}
+                  className="relative inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-colors cursor-pointer"
                 >
-                  <Bell className="w-4 h-4 text-[#D4A359]" />
+                  <Bell className="w-4 h-4" style={{ color: theme.primaryColor }} />
                   {unreadNotifCount > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full bg-emerald-500 text-[#081A10] font-mono text-[10px] font-extrabold">
                       {unreadNotifCount}
@@ -1654,7 +1990,17 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                         activeNotifications.slice(0, 8).map((n) => (
                           <div
                             key={n.id}
-                            className={`relative p-2.5 pe-7 rounded-xl border ${
+                            role="button"
+                            tabIndex={0}
+                            data-testid={`notification-item-${n.id}`}
+                            onClick={() => handleNotificationClick(n)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleNotificationClick(n);
+                              }
+                            }}
+                            className={`relative p-2.5 pe-7 rounded-xl border transition-colors hover:border-[#D4A359] cursor-pointer ${
                               n.unread
                                 ? 'border-[#D4A359]/45 bg-[#28120D]'
                                 : 'border-[#D4A359]/15 bg-[#140806]'
@@ -1662,7 +2008,10 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                           >
                             <button
                               type="button"
-                              onClick={() => handleDismissNotif(n.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDismissNotif(n.id);
+                              }}
                               aria-label="Bildirimi Sil"
                               className="absolute top-2 end-2 p-0.5 rounded-md text-[#A88E76] hover:text-rose-400 hover:bg-black/30 cursor-pointer"
                             >
@@ -1675,6 +2024,10 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                               </span>
                             </div>
                             <p className="text-[11px] text-[#DECAB4] mt-1">{n.detail}</p>
+                            <div className="mt-1.5 text-[10px] font-bold text-[#D4A359] flex items-center gap-1">
+                              <span>İlgili bölüme git</span>
+                              <span aria-hidden="true">→</span>
+                            </div>
                           </div>
                         ))
                       )}
@@ -1687,8 +2040,9 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                           Notification.requestPermission().catch(() => {});
                         }
                         triggerCustomerNotification(
-                          `Canlı Bildirim Testi (${activeTableNumberBadge})`,
-                          `Sesli ve anlık bildirim sistemi aktif! Sorumlu Garson: ${activeTable?.waiterName}`
+                          'Öğle Ciğer Şiş Fırsatı (%15 İndirim)',
+                          'OGLECIGER15 kuponunu hemen kullanmak için dokunun.',
+                          { type: 'campaign' }
                         );
                       }}
                       className="w-full py-2 rounded-xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] font-bold text-xs cursor-pointer"
@@ -1705,7 +2059,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
 
       {/* Bildirim Toast */}
       {toastBanner && (
-        <div className="fixed top-20 end-4 start-4 sm:start-auto sm:w-96 z-[200] rounded-2xl border border-[#D4A359]/50 bg-[#1B0C09]/95 backdrop-blur-md p-4 shadow-2xl flex items-start gap-3">
+        <div className="fixed bottom-24 start-4 end-4 sm:end-auto sm:w-96 z-[200] rounded-2xl border border-[#D4A359]/50 bg-[#1B0C09]/95 backdrop-blur-md p-4 shadow-2xl flex items-start gap-3">
           <CheckCircle2
             className={`w-5 h-5 shrink-0 mt-0.5 ${
               toastBanner.type === 'success' ? 'text-emerald-400' : 'text-rose-400'
@@ -1736,36 +2090,45 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
         >
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
             <div className="relative flex-1 group">
-              <Search className="w-4 h-4 text-[#D4A359] absolute start-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Search
+                className="w-4 h-4 absolute start-4 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: theme.primaryColor }}
+              />
               <input
                 type="search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={t.menu.searchPlaceholder}
                 aria-label={t.menu.searchPlaceholder}
-                className="w-full rounded-2xl border border-[#D4A359]/35 bg-[#1B0D09]/95 ps-11 pe-10 py-3 text-xs sm:text-sm text-[#FFF6E9] placeholder-[#A88E76] shadow-[0_6px_24px_rgba(0,0,0,0.45)] focus:outline-none focus:border-[#D4A359] focus:ring-2 focus:ring-[#D4A359]/25 transition-all"
+                style={{
+                  backgroundColor: theme.surfaceColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className="w-full rounded-2xl border ps-11 pe-10 py-3 text-xs sm:text-sm shadow-sm focus:outline-none focus:ring-2 transition-all"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
                   aria-label="Aramayı Temizle"
-                  className="absolute end-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-[#C4AC95] hover:text-white cursor-pointer"
+                  style={{ color: theme.textSecondary }}
+                  className="absolute end-3 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:opacity-80 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            {(activeTableOrders.length > 0 || activeTableWaiterCalls.length > 0) && (
+            {((orderTrackingEnabled && activeTableOrders.length > 0) || activeTableWaiterCalls.length > 0) && (
               <button
                 type="button"
                 onClick={() => setCartDrawerOpen(true)}
-                className="inline-flex items-center justify-between sm:justify-start gap-2 px-4 py-3 rounded-2xl bg-emerald-950/60 border border-emerald-500/40 text-xs font-semibold text-emerald-300 shadow-lg cursor-pointer shrink-0"
+                className="inline-flex items-center justify-between sm:justify-start gap-2 px-4 py-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-xs font-semibold text-emerald-200 shadow-lg cursor-pointer shrink-0"
               >
                 <Clock className="w-4 h-4 shrink-0" />
                 <span>
-                  {activeTableOrders.length > 0
+                  {orderTrackingEnabled && activeTableOrders.length > 0
                     ? `${t.menu.activeOrderBadge}: ${activeTableOrders[0].status}`
                     : t.menu.waiterCalledBadge}
                 </span>
@@ -1776,85 +2139,398 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       )}
 
       {/* =====================================================================
-          2B. HERO SLIDER & SİTEDEKİ TEK "QR KOD OKU" BUTONU
-          (QR Kod Oku Butonu Sadece Burada Yer Alır)
+          2B. HERO SLIDER (4 TEMA MİMARİSİ: CLASSIC / SPLIT EDITORIAL / BENTO / BOTANIC)
+          (Sitedeki Tek "QR KOD OKU" Butonu Burada Yer Alır)
       ===================================================================== */}
       <section className="max-w-6xl mx-auto px-3.5 sm:px-6 py-2">
-        <div className="relative rounded-3xl overflow-hidden border border-[#D4A359]/35 bg-[#1B0C09] min-h-[210px] sm:min-h-[250px] flex items-center">
-          <img
-            src={currentSlide?.imageUrl || '/assets/aistudio/crops/hero-ciger.png'}
-            alt={slideLocalized.title}
-            className="absolute inset-0 w-full h-full object-cover object-center opacity-55 transition-all duration-700"
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#120806] via-[#120806]/85 to-[#120806]/30" />
-
-          <div className="relative z-10 w-full p-5 sm:p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
-            <div className="flex items-center gap-4 sm:gap-5">
+        {theme.heroLayout === 'split-editorial' ? (
+          /* TEMA 2: MERMER & TRAVERTEN EDİTORYAL (BÖLÜNMÜŞ 7/5 HERO) */
+          <div
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: theme.borderColor,
+              color: theme.textPrimary,
+            }}
+            className={`${theme.cardRadius} overflow-hidden border shadow-sm grid grid-cols-1 lg:grid-cols-12`}
+          >
+            <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between gap-5">
               <div>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#D4A359]/20 border border-[#D4A359]/40 text-[11px] font-semibold text-[#F6D79E]">
-                  <Flame className="w-3.5 h-3.5 text-[#D4A359]" />
+                <span
+                  style={{
+                    backgroundColor: theme.surfaceAltColor,
+                    borderColor: theme.borderColor,
+                    color: theme.primaryColor,
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-bold"
+                >
+                  <Flame className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
                   {slideLocalized.badge}
                 </span>
-                <h1 className="font-editorial text-2xl sm:text-4xl font-bold text-[#FFF7EB] mt-2 leading-tight">
+                <h1
+                  style={{ color: theme.textPrimary }}
+                  className="font-editorial text-2xl sm:text-4xl font-bold mt-3 leading-tight"
+                >
                   {slideLocalized.title}
                 </h1>
-                <p className="text-xs sm:text-sm text-[#DECAB4] mt-1 max-w-lg">
+                <p
+                  style={{ color: theme.textSecondary }}
+                  className="text-xs sm:text-sm mt-2 max-w-xl leading-relaxed"
+                >
                   {slideLocalized.subtitle}
                 </p>
               </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t" style={{ borderColor: theme.borderColor }}>
+                <div className="flex flex-wrap items-center gap-2">
+                  {tableSelectionEnabled ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setQrModalOpen(true)}
+                        style={primaryButtonStyle}
+                        className={`inline-flex items-center justify-center gap-2 px-5 py-3 ${theme.buttonRadius} ${primaryButtonClass} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-md transition-all cursor-pointer`}
+                      >
+                        <QrCode className="w-4 h-4 shrink-0" />
+                        <span>
+                          {currentLang === 'tr' && siteCmsConfig.design.qrButtonLabelTr
+                            ? siteCmsConfig.design.qrButtonLabelTr
+                            : t.hero.qrScanSingleBtn}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-black/15 font-mono text-[11px]">
+                          {effectiveQrTableId ? activeTableNumberBadge : t.extras.qrUnverifiedBadge}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setTableOccupancyModalOpen(true)}
+                        style={{
+                          backgroundColor: theme.surfaceAltColor,
+                          borderColor: theme.borderColor,
+                          color: theme.textPrimary,
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-semibold cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
+                        <span>{t.extras.tableStatusBtn}</span>
+                      </button>
+                    </>
+                  ) : (
+                    <a
+                      href="#menu"
+                      style={primaryButtonStyle}
+                      className={`inline-flex items-center justify-center gap-2 px-5 py-3 ${theme.buttonRadius} ${primaryButtonClass} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-md transition-all cursor-pointer`}
+                    >
+                      <ShoppingBag className="w-4 h-4 shrink-0" />
+                      <span>Menüyü İncele & Sipariş Ver</span>
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setMemberModalOpen(true)}
+                    style={{
+                      backgroundColor: theme.surfaceAltColor,
+                      borderColor: theme.borderColor,
+                      color: theme.textPrimary,
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-semibold cursor-pointer"
+                  >
+                    <User className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
+                    <span>
+                      {customerMember ? `${customerMember.name.split(' ')[0]} · ${t.extras.memberOrdersTab}` : t.extras.memberBtn}
+                    </span>
+                  </button>
+                </div>
+
+                {activeSlides.length > 1 && (
+                  <div className="flex items-center gap-1.5">
+                    {activeSlides.map((sl, idx) => (
+                      <button
+                        key={sl.id}
+                        type="button"
+                        onClick={() => setCurrentSlideIdx(idx)}
+                        aria-label={`Slayt ${idx + 1}`}
+                        style={{
+                          backgroundColor: currentSlideIdx === idx ? theme.primaryColor : theme.borderColor,
+                        }}
+                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                          currentSlideIdx === idx ? 'w-6' : 'w-2'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* SİTEDEKİ TEK "QR KOD OKU" BUTONU + MASA DURUMLARI & ÜYELİK */}
-            <div className="flex flex-col sm:items-end gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setQrModalOpen(true)}
-                className={`inline-flex items-center justify-center gap-2.5 px-5 py-3.5 ${siteCmsConfig.design.buttonRadius} ${primaryButtonClass} font-extrabold text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
-              >
-                <QrCode className="w-4 h-4 shrink-0" />
-                <span>
-                  {currentLang === 'tr' && siteCmsConfig.design.qrButtonLabelTr
-                    ? siteCmsConfig.design.qrButtonLabelTr
-                    : t.hero.qrScanSingleBtn}
-                </span>
-                <span className="px-2 py-0.5 rounded-lg bg-black/20 font-mono text-[11px]">
-                  {qrVerifiedTableId ? activeTableNumberBadge : t.extras.qrUnverifiedBadge}
-                </span>
-              </button>
+            <div className="lg:col-span-5 relative min-h-[210px] lg:min-h-[280px] overflow-hidden">
+              <img
+                src={currentSlide?.imageUrl || '/assets/aistudio/crops/hero-ciger.png'}
+                alt={slideLocalized.title}
+                className="w-full h-full object-cover object-center transition-all duration-700"
+              />
+            </div>
+          </div>
+        ) : theme.heroLayout === 'bento-split' ? (
+          /* TEMA 3: OBSİDYEN BENTO GRİD (8/4 MODÜLER BENTO HERO) */
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
+            <div
+              style={{ backgroundColor: theme.surfaceColor, borderColor: theme.borderColor }}
+              className={`lg:col-span-8 relative ${theme.cardRadius} overflow-hidden border min-h-[230px] sm:min-h-[265px] flex items-end`}
+            >
+              <img
+                src={currentSlide?.imageUrl || '/assets/aistudio/crops/hero-ciger.png'}
+                alt={slideLocalized.title}
+                className="absolute inset-0 w-full h-full object-cover object-center opacity-55 transition-all duration-700"
+              />
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: `linear-gradient(180deg, rgba(10,15,24,0.25) 0%, ${theme.backgroundColor} 95%)`,
+                }}
+              />
+              <div className="relative z-10 w-full p-5 sm:p-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                <div>
+                  <span
+                    style={{
+                      backgroundColor: 'rgba(245,158,11,0.18)',
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold"
+                  >
+                    <Flame className="w-3.5 h-3.5" />
+                    {slideLocalized.badge}
+                  </span>
+                  <h1 className="font-editorial text-2xl sm:text-3xl font-bold mt-2 leading-tight text-white">
+                    {slideLocalized.title}
+                  </h1>
+                  <p className="text-xs sm:text-sm mt-1 max-w-md text-slate-200">
+                    {slideLocalized.subtitle}
+                  </p>
+                </div>
 
-              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                  {tableSelectionEnabled ? (
+                    <button
+                      type="button"
+                      onClick={() => setQrModalOpen(true)}
+                      style={primaryButtonStyle}
+                      className={`inline-flex items-center justify-center gap-2 px-5 py-3 ${theme.buttonRadius} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
+                    >
+                      <QrCode className="w-4 h-4 shrink-0" />
+                      <span>
+                        {currentLang === 'tr' && siteCmsConfig.design.qrButtonLabelTr
+                          ? siteCmsConfig.design.qrButtonLabelTr
+                          : t.hero.qrScanSingleBtn}
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-black/20 font-mono text-[11px]">
+                        {effectiveQrTableId ? activeTableNumberBadge : t.extras.qrUnverifiedBadge}
+                      </span>
+                    </button>
+                  ) : (
+                    <a
+                      href="#menu"
+                      style={primaryButtonStyle}
+                      className={`inline-flex items-center justify-center gap-2 px-5 py-3 ${theme.buttonRadius} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
+                    >
+                      <ShoppingBag className="w-4 h-4 shrink-0" />
+                      <span>Menüyü İncele & Sipariş Ver</span>
+                    </a>
+                  )}
+                  {activeSlides.length > 1 && (
+                    <div className="flex items-center gap-1.5 self-end">
+                      {activeSlides.map((sl, idx) => (
+                        <button
+                          key={sl.id}
+                          type="button"
+                          onClick={() => setCurrentSlideIdx(idx)}
+                          aria-label={`Slayt ${idx + 1}`}
+                          style={{
+                            backgroundColor: currentSlideIdx === idx ? theme.primaryColor : 'rgba(255,255,255,0.28)',
+                          }}
+                          className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                            currentSlideIdx === idx ? 'w-6' : 'w-2'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="lg:col-span-4 grid grid-cols-2 lg:grid-cols-1 gap-3">
+              {tableSelectionEnabled && (
                 <button
                   type="button"
                   onClick={() => setTableOccupancyModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#22100C]/90 hover:bg-[#311711] border border-[#D4A359]/35 text-[11px] font-semibold text-[#F6D79E] cursor-pointer"
+                  style={{
+                    backgroundColor: theme.surfaceColor,
+                    borderColor: theme.borderColor,
+                    color: theme.textPrimary,
+                  }}
+                  className={`${theme.cardRadius} border p-4 text-start flex flex-col justify-between gap-2 hover:brightness-110 transition-all cursor-pointer`}
                 >
-                  <Eye className="w-3.5 h-3.5 text-[#D4A359]" />
-                  <span>{t.extras.tableStatusBtn}</span>
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: theme.primaryColor }}>
+                      Salon & Masa
+                    </span>
+                    <Eye className="w-4 h-4" style={{ color: theme.primaryColor }} />
+                  </div>
+                  <div>
+                    <div className="font-mono text-lg font-extrabold">{openTablesCount} Müsait Masa</div>
+                    <div className="text-[11px]" style={{ color: theme.textSecondary }}>
+                      {t.extras.tableStatusBtn}
+                    </div>
+                  </div>
                 </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setMemberModalOpen(true)}
+                style={{
+                  backgroundColor: theme.surfaceAltColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className={`${theme.cardRadius} border p-4 text-start flex flex-col justify-between gap-2 hover:brightness-110 transition-all cursor-pointer`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: theme.primaryColor }}>
+                    Misafir Kulübü
+                  </span>
+                  <User className="w-4 h-4" style={{ color: theme.primaryColor }} />
+                </div>
+                <div>
+                  <div className="text-sm font-bold truncate">
+                    {customerMember ? customerMember.name : t.extras.memberBtn}
+                  </div>
+                  <div className="text-[11px]" style={{ color: theme.textSecondary }}>
+                    {workingHoursByLang}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        ) : theme.heroLayout === 'arched-botanic' ? (
+          /* TEMA 4: ANTEP FISTIK & BOTANİK AVLU (KEMERLİ HERO) */
+          <div
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: theme.borderColor,
+              color: theme.textPrimary,
+            }}
+            className="rounded-[2rem] border p-5 sm:p-7 overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-6 items-center"
+          >
+            <div className="lg:col-span-7 space-y-4">
+              <span
+                style={{
+                  backgroundColor: theme.surfaceAltColor,
+                  borderColor: theme.borderColor,
+                  color: theme.secondaryColor,
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-bold"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                {slideLocalized.badge}
+              </span>
+              <h1
+                style={{ color: theme.textPrimary }}
+                className="font-editorial text-2xl sm:text-4xl font-bold leading-tight"
+              >
+                {slideLocalized.title}
+              </h1>
+              <p style={{ color: theme.textSecondary }} className="text-xs sm:text-sm max-w-lg leading-relaxed">
+                {slideLocalized.subtitle}
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {tableSelectionEnabled ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setQrModalOpen(true)}
+                      style={primaryButtonStyle}
+                      className={`inline-flex items-center justify-center gap-2 px-5 py-3 ${theme.buttonRadius} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
+                    >
+                      <QrCode className="w-4 h-4 shrink-0" />
+                      <span>
+                        {currentLang === 'tr' && siteCmsConfig.design.qrButtonLabelTr
+                          ? siteCmsConfig.design.qrButtonLabelTr
+                          : t.hero.qrScanSingleBtn}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-black/20 font-mono text-[11px]">
+                        {effectiveQrTableId ? activeTableNumberBadge : t.extras.qrUnverifiedBadge}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTableOccupancyModalOpen(true)}
+                      style={{
+                        backgroundColor: theme.surfaceAltColor,
+                        borderColor: theme.borderColor,
+                        color: theme.textPrimary,
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-full border text-[11px] font-semibold cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" style={{ color: theme.secondaryColor }} />
+                      <span>{t.extras.tableStatusBtn}</span>
+                    </button>
+                  </>
+                ) : (
+                  <a
+                    href="#menu"
+                    style={primaryButtonStyle}
+                    className={`inline-flex items-center justify-center gap-2 px-5 py-3 ${theme.buttonRadius} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
+                  >
+                    <ShoppingBag className="w-4 h-4 shrink-0" />
+                    <span>Menüyü İncele & Sipariş Ver</span>
+                  </a>
+                )}
                 <button
                   type="button"
                   onClick={() => setMemberModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#22100C]/90 hover:bg-[#311711] border border-[#D4A359]/35 text-[11px] font-semibold text-[#F6D79E] cursor-pointer"
+                  style={{
+                    backgroundColor: theme.surfaceAltColor,
+                    borderColor: theme.borderColor,
+                    color: theme.textPrimary,
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-full border text-[11px] font-semibold cursor-pointer"
                 >
-                  <User className="w-3.5 h-3.5 text-[#D4A359]" />
+                  <User className="w-3.5 h-3.5" style={{ color: theme.secondaryColor }} />
                   <span>
                     {customerMember ? `${customerMember.name.split(' ')[0]} · ${t.extras.memberOrdersTab}` : t.extras.memberBtn}
                   </span>
                 </button>
               </div>
+            </div>
 
+            <div className="lg:col-span-5 flex flex-col items-center gap-3">
+              <div
+                style={{ borderColor: theme.primaryColor }}
+                className="w-full max-w-[300px] h-[220px] sm:h-[250px] rounded-t-[150px] rounded-b-3xl overflow-hidden border-2 shadow-2xl"
+              >
+                <img
+                  src={currentSlide?.imageUrl || '/assets/aistudio/crops/hero-ciger.png'}
+                  alt={slideLocalized.title}
+                  className="w-full h-full object-cover object-center transition-all duration-700"
+                />
+              </div>
               {activeSlides.length > 1 && (
-                <div className="flex items-center gap-1.5 self-end">
+                <div className="flex items-center gap-1.5">
                   {activeSlides.map((sl, idx) => (
                     <button
                       key={sl.id}
                       type="button"
                       onClick={() => setCurrentSlideIdx(idx)}
                       aria-label={`Slayt ${idx + 1}`}
+                      style={{
+                        backgroundColor: currentSlideIdx === idx ? theme.primaryColor : theme.borderColor,
+                      }}
                       className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                        currentSlideIdx === idx
-                          ? 'w-6 bg-[#D4A359]'
-                          : 'w-2 bg-[#D4A359]/35'
+                        currentSlideIdx === idx ? 'w-6' : 'w-2'
                       }`}
                     />
                   ))}
@@ -1862,7 +2538,132 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
               )}
             </div>
           </div>
-        </div>
+        ) : (
+          /* TEMA 1: ÖZTİKE BAKIR OCAKBAŞI (KLASİK BANNER HERO) */
+          <div
+            style={{ backgroundColor: theme.surfaceColor, borderColor: theme.borderColor }}
+            className="relative rounded-3xl overflow-hidden border min-h-[210px] sm:min-h-[250px] flex items-center"
+          >
+            <img
+              src={currentSlide?.imageUrl || '/assets/aistudio/crops/hero-ciger.png'}
+              alt={slideLocalized.title}
+              className="absolute inset-0 w-full h-full object-cover object-center opacity-55 transition-all duration-700"
+            />
+            <div
+              className="absolute inset-0"
+              style={{
+                background: `linear-gradient(90deg, ${theme.backgroundColor} 0%, rgba(18,8,6,0.82) 55%, rgba(18,8,6,0.28) 100%)`,
+              }}
+            />
+
+            <div className="relative z-10 w-full p-5 sm:p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+              <div className="flex items-center gap-4 sm:gap-5">
+                <div>
+                  <span
+                    style={{
+                      backgroundColor: 'rgba(212,163,89,0.2)',
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold"
+                  >
+                    <Flame className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
+                    {slideLocalized.badge}
+                  </span>
+                  <h1 className="font-editorial text-2xl sm:text-4xl font-bold text-[#FFF7EB] mt-2 leading-tight">
+                    {slideLocalized.title}
+                  </h1>
+                  <p className="text-xs sm:text-sm text-[#DECAB4] mt-1 max-w-lg">
+                    {slideLocalized.subtitle}
+                  </p>
+                </div>
+              </div>
+
+              {/* Hızlı Sipariş veya Aktifse QR Masa Seçimi */}
+              <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                {tableSelectionEnabled ? (
+                  <button
+                    type="button"
+                    onClick={() => setQrModalOpen(true)}
+                    style={primaryButtonStyle}
+                    className={`inline-flex items-center justify-center gap-2.5 px-5 py-3.5 ${theme.buttonRadius} ${primaryButtonClass} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
+                  >
+                    <QrCode className="w-4 h-4 shrink-0" />
+                    <span>
+                      {currentLang === 'tr' && siteCmsConfig.design.qrButtonLabelTr
+                        ? siteCmsConfig.design.qrButtonLabelTr
+                        : t.hero.qrScanSingleBtn}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-lg bg-black/20 font-mono text-[11px]">
+                      {effectiveQrTableId ? activeTableNumberBadge : t.extras.qrUnverifiedBadge}
+                    </span>
+                  </button>
+                ) : (
+                  <a
+                    href="#menu"
+                    style={primaryButtonStyle}
+                    className={`inline-flex items-center justify-center gap-2.5 px-5 py-3.5 ${theme.buttonRadius} ${primaryButtonClass} ${theme.buttonFontWeightClass} text-xs sm:text-sm shadow-xl transition-all cursor-pointer`}
+                  >
+                    <ShoppingBag className="w-4 h-4 shrink-0" />
+                    <span>Menüyü İncele & Hızlı Sipariş Ver</span>
+                  </a>
+                )}
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {tableSelectionEnabled && (
+                    <button
+                      type="button"
+                      onClick={() => setTableOccupancyModalOpen(true)}
+                      style={{
+                        backgroundColor: theme.surfaceAltColor,
+                        borderColor: theme.borderColor,
+                        color: theme.textPrimary,
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
+                      <span>{t.extras.tableStatusBtn}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setMemberModalOpen(true)}
+                    style={{
+                      backgroundColor: theme.surfaceAltColor,
+                      borderColor: theme.borderColor,
+                      color: theme.textPrimary,
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold cursor-pointer"
+                  >
+                    <User className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
+                    <span>
+                      {customerMember ? `${customerMember.name.split(' ')[0]} · ${t.extras.memberOrdersTab}` : t.extras.memberBtn}
+                    </span>
+                  </button>
+                </div>
+
+                {activeSlides.length > 1 && (
+                  <div className="flex items-center gap-1.5 self-end">
+                    {activeSlides.map((sl, idx) => (
+                      <button
+                        key={sl.id}
+                        type="button"
+                        onClick={() => setCurrentSlideIdx(idx)}
+                        aria-label={`Slayt ${idx + 1}`}
+                        style={{
+                          backgroundColor: currentSlideIdx === idx ? theme.primaryColor : 'rgba(212,163,89,0.35)',
+                        }}
+                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                          currentSlideIdx === idx ? 'w-6' : 'w-2'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* =====================================================================
@@ -1872,7 +2673,11 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
         id="menu"
         aria-label={t.categories.sectionTitle}
         data-compact={isCategoryStickyCompact ? 'true' : 'false'}
-        className={`sticky top-16 z-30 bg-[#120806]/95 backdrop-blur-md border-b border-[#D4A359]/15 transition-all duration-200 ${
+        style={{
+          backgroundColor: theme.isLight ? 'rgba(246, 241, 231, 0.96)' : theme.backgroundColor,
+          borderColor: theme.borderColor,
+        }}
+        className={`sticky top-16 z-30 backdrop-blur-md border-b transition-all duration-200 ${
           isCategoryStickyCompact ? 'py-1.5' : 'py-3'
         }`}
       >
@@ -1883,11 +2688,16 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             }`}
           >
             <div className="flex items-center gap-2">
-              <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#F5D69B]">
+              <h2
+                style={{ color: theme.isLight ? theme.textPrimary : theme.primaryColor }}
+                className="text-xs sm:text-sm font-bold uppercase tracking-wider"
+              >
                 {t.categories.sectionTitle}
               </h2>
               {!isCategoryStickyCompact && (
-                <span className="text-[11px] text-[#A88E76]">{t.categories.swipeHint}</span>
+                <span style={{ color: theme.textSecondary }} className="text-[11px]">
+                  {t.categories.swipeHint}
+                </span>
               )}
             </div>
 
@@ -1896,7 +2706,12 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 type="button"
                 onClick={() => scrollCategories('left')}
                 aria-label="Sola Kaydır"
-                className="p-1.5 rounded-lg bg-[#1F0E0B] border border-[#D4A359]/30 text-[#F5D69B] hover:bg-[#2C140F] cursor-pointer"
+                style={{
+                  backgroundColor: theme.surfaceAltColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className="p-1.5 rounded-lg border hover:opacity-80 cursor-pointer"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -1904,7 +2719,12 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 type="button"
                 onClick={() => scrollCategories('right')}
                 aria-label="Sağa Kaydır"
-                className="p-1.5 rounded-lg bg-[#1F0E0B] border border-[#D4A359]/30 text-[#F5D69B] hover:bg-[#2C140F] cursor-pointer"
+                style={{
+                  backgroundColor: theme.surfaceAltColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className="p-1.5 rounded-lg border hover:opacity-80 cursor-pointer"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -1917,13 +2737,22 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
           >
             <button
               type="button"
-              onClick={() => handleCategorySelect('ALL')}
+              onClick={() => {
+                setSelectedCategoryId('ALL');
+                const el = document.getElementById('product-grid-section');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }}
+              style={{
+                backgroundColor: selectedCategoryId === 'ALL' ? theme.surfaceAltColor : theme.surfaceColor,
+                borderColor: selectedCategoryId === 'ALL' ? theme.primaryColor : theme.borderColor,
+                color: theme.textPrimary,
+              }}
               className={`group shrink-0 snap-start ${
                 isCategoryStickyCompact ? 'w-20 sm:w-24' : 'w-24 sm:w-28'
               } rounded-xl overflow-hidden border transition-all text-left cursor-pointer ${
-                selectedCategoryId === 'ALL'
-                  ? 'border-[#D4A359] bg-[#2B140E] ring-2 ring-[#D4A359]/40'
-                  : 'border-[#D4A359]/20 bg-[#1A0C09] hover:border-[#D4A359]/50'
+                selectedCategoryId === 'ALL' ? 'ring-2 ring-amber-500/35' : ''
               }`}
             >
               <div
@@ -1936,13 +2765,13 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                   alt={t.categories.all}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#120806] via-transparent to-transparent" />
               </div>
               <div className={`${isCategoryStickyCompact ? 'py-1 px-1.5' : 'p-2'} text-center`}>
                 <div
+                  style={{ color: theme.textPrimary }}
                   className={`${
                     isCategoryStickyCompact ? 'text-[11px]' : 'text-xs'
-                  } font-bold text-[#FFF6E9] truncate`}
+                  } font-bold truncate`}
                 >
                   {t.categories.all}
                 </div>
@@ -1958,13 +2787,22 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 <button
                   key={cat.id}
                   type="button"
-                  onClick={() => handleCategorySelect(cat.id)}
+                  onClick={() => {
+                    setSelectedCategoryId(cat.id);
+                    const el = document.getElementById('product-grid-section');
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                  }}
+                  style={{
+                    backgroundColor: isSelected ? theme.surfaceAltColor : theme.surfaceColor,
+                    borderColor: isSelected ? theme.primaryColor : theme.borderColor,
+                    color: theme.textPrimary,
+                  }}
                   className={`group shrink-0 snap-start ${
                     isCategoryStickyCompact ? 'w-20 sm:w-24' : 'w-24 sm:w-28'
                   } rounded-xl overflow-hidden border transition-all text-left cursor-pointer ${
-                    isSelected
-                      ? 'border-[#D4A359] bg-[#2B140E] ring-2 ring-[#D4A359]/40'
-                      : 'border-[#D4A359]/20 bg-[#1A0C09] hover:border-[#D4A359]/50'
+                    isSelected ? 'ring-2 ring-amber-500/35' : ''
                   }`}
                 >
                   <div
@@ -1977,13 +2815,13 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                       alt={catName}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#120806] via-transparent to-transparent" />
                   </div>
                   <div className={`${isCategoryStickyCompact ? 'py-1 px-1.5' : 'p-2'} text-center`}>
                     <div
+                      style={{ color: theme.textPrimary }}
                       className={`${
                         isCategoryStickyCompact ? 'text-[11px]' : 'text-xs'
-                      } font-bold text-[#FFF6E9] truncate`}
+                      } font-bold truncate`}
                     >
                       {catName}
                     </div>
@@ -1998,10 +2836,9 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       {/* =====================================================================
           4. ANA İÇERİK: ÜRÜN KARTLARI (+ / - ADET ÇOĞALTMA & ÖZELLEŞTİRME)
       ===================================================================== */}
-      <main className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-5 space-y-8 min-h-[85vh]">
-
+      <main className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-5 space-y-8">
         {/* Ürün Listesi Grid */}
-        <div id="product-grid-section" className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+        <div id="product-grid-section" className={theme.menuGridClass}>
           {filteredProducts.map((product) => {
             const effectivePrice = product.discountedPrice ?? product.price;
             const imgSrc =
@@ -2016,13 +2853,22 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             return (
               <article
                 key={product.id}
-                className={`${siteCmsConfig.design.cardRadius} overflow-hidden border border-[#D4A359]/20 bg-[#1A0C09] hover:border-[#D4A359]/45 transition-all p-3 sm:p-3.5 flex flex-col gap-3`}
+                style={{
+                  backgroundColor: theme.surfaceColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className={`${theme.cardRadius} overflow-hidden border transition-all p-3 sm:p-3.5 flex flex-col justify-between gap-3 shadow-sm`}
               >
                 <div className="flex gap-3 items-start">
                   <button
                     type="button"
                     onClick={() => openProductCustomizer(product)}
-                    className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shrink-0 bg-[#120705] border border-[#D4A359]/20 cursor-pointer group"
+                    style={{
+                      backgroundColor: theme.surfaceAltColor,
+                      borderColor: theme.borderColor,
+                    }}
+                    className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shrink-0 border cursor-pointer group"
                   >
                     <img
                       src={imgSrc}
@@ -2040,15 +2886,22 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     <button
                       type="button"
                       onClick={() => openProductCustomizer(product)}
-                      className="text-start font-bold text-sm sm:text-base text-[#FFF7EB] hover:text-[#F5D69B] transition-colors line-clamp-1 cursor-pointer block w-full"
+                      style={{ color: theme.textPrimary }}
+                      className="text-start font-bold text-sm sm:text-base hover:opacity-80 transition-opacity line-clamp-1 cursor-pointer block w-full"
                     >
                       {translated.name}
                     </button>
-                    <p className="text-xs text-[#C4AC95] line-clamp-2 mt-1 leading-relaxed">
+                    <p
+                      style={{ color: theme.textSecondary }}
+                      className="text-xs line-clamp-2 mt-1 leading-relaxed"
+                    >
                       {translated.description}
                     </p>
                     {(siteCmsConfig.design.showProductPrepTime || siteCmsConfig.design.showProductCalories) && (
-                      <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[10px] text-[#A88E76] font-mono">
+                      <div
+                        style={{ color: theme.textSecondary }}
+                        className="flex flex-wrap items-center gap-2 mt-1.5 text-[10px] font-mono opacity-85"
+                      >
                         {siteCmsConfig.design.showProductPrepTime && <span>⏱ {product.prepTimeMinutes || 12} dk</span>}
                         {siteCmsConfig.design.showProductCalories && <span>• {product.calories || 420} kcal</span>}
                       </div>
@@ -2056,14 +2909,23 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-[#D4A359]/10">
+                <div
+                  style={{ borderColor: theme.borderColor }}
+                  className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t"
+                >
                   <div className="whitespace-nowrap shrink-0">
                     {product.discountedPrice && (
-                      <span className="text-[11px] line-through text-[#8F7660] me-1 font-mono">
+                      <span
+                        style={{ color: theme.textSecondary }}
+                        className="text-[11px] line-through opacity-75 me-1 font-mono"
+                      >
                         {product.price} ₺
                       </span>
                     )}
-                    <span className="font-mono text-sm sm:text-base font-bold text-[#F5D69B]">
+                    <span
+                      style={{ color: theme.primaryColor }}
+                      className="font-mono text-sm sm:text-base font-bold"
+                    >
                       {effectivePrice} ₺
                     </span>
                   </div>
@@ -2074,7 +2936,12 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                       onClick={() => setSharingProduct(product)}
                       aria-label={`${translated.name} ${t.menu.shareBtn}`}
                       title={t.menu.shareBtn}
-                      className="p-1.5 rounded-xl bg-[#27120D] hover:bg-[#351912] border border-[#D4A359]/30 text-[#D4A359] cursor-pointer"
+                      style={{
+                        backgroundColor: theme.surfaceAltColor,
+                        borderColor: theme.borderColor,
+                        color: theme.primaryColor,
+                      }}
+                      className="p-1.5 rounded-xl border hover:opacity-85 cursor-pointer"
                     >
                       <Share2 className="w-3.5 h-3.5" />
                     </button>
@@ -2083,24 +2950,39 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                       <button
                         type="button"
                         onClick={() => openProductCustomizer(product)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#27120D] hover:bg-[#351912] border border-[#D4A359]/35 text-[11px] font-semibold text-[#F5D69B] whitespace-nowrap cursor-pointer"
+                        style={{
+                          backgroundColor: theme.surfaceAltColor,
+                          borderColor: theme.borderColor,
+                          color: theme.textPrimary,
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold whitespace-nowrap cursor-pointer"
                       >
-                        <SlidersHorizontal className="w-3 h-3 text-[#D4A359] shrink-0" />
+                        <SlidersHorizontal className="w-3 h-3 shrink-0" style={{ color: theme.primaryColor }} />
                         <span>{t.menu.optionsBtn}</span>
                       </button>
                     )}
 
-                    <div className="inline-flex items-center rounded-xl bg-[#26120D] border border-[#D4A359]/50 p-0.5 shrink-0">
+                    <div
+                      style={{
+                        backgroundColor: theme.surfaceAltColor,
+                        borderColor: theme.borderColor,
+                      }}
+                      className="inline-flex items-center rounded-xl border p-0.5 shrink-0"
+                    >
                       <button
                         type="button"
                         onClick={() => handleQuickQuantityDelta(product, -1)}
                         disabled={qtyInCart === 0}
                         aria-label={`${translated.name} -`}
-                        className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center text-[#F5D69B] hover:bg-[#3D1D14] disabled:opacity-35 cursor-pointer"
+                        style={{ color: theme.textPrimary }}
+                        className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center hover:opacity-80 disabled:opacity-35 cursor-pointer"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
-                      <span className="w-5 sm:w-6 text-center font-mono text-xs font-bold text-white">
+                      <span
+                        style={{ color: theme.textPrimary }}
+                        className="w-5 sm:w-6 text-center font-mono text-xs font-bold"
+                      >
                         {qtyInCart}
                       </span>
                       <button
@@ -2111,7 +2993,11 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                             : handleQuickQuantityDelta(product, 1)
                         }
                         aria-label={`${translated.name} +`}
-                        className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center bg-[#D4A359] text-[#1A0B08] font-bold hover:bg-[#E3B66B] cursor-pointer"
+                        style={{
+                          backgroundColor: theme.primaryColor,
+                          color: theme.ctaTextColor,
+                        }}
+                        className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center font-bold hover:brightness-110 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -2131,23 +3017,36 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             return (
               <section
                 key={block.id}
-                className="rounded-2xl border border-[#D4A359]/30 bg-gradient-to-r from-[#1E0E0A] via-[#27120D] to-[#1A0B08] p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                style={{
+                  backgroundColor: theme.surfaceColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className={`${theme.cardRadius} border p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}
               >
                 <div className="space-y-1">
-                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#D4A359]/20 border border-[#D4A359]/40 text-[10px] font-bold text-[#F6D79E]">
+                  <span
+                    style={{
+                      backgroundColor: theme.surfaceAltColor,
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="inline-block px-2.5 py-0.5 rounded-full border text-[10px] font-bold"
+                  >
                     {block.badgeText}
                   </span>
-                  <h3 className="font-editorial text-lg sm:text-xl font-bold text-[#FFF7EB]">
+                  <h3 style={{ color: theme.textPrimary }} className="font-editorial text-lg sm:text-xl font-bold">
                     {loc.title}
                   </h3>
-                  <p className="text-xs text-[#DECAB4] max-w-2xl leading-relaxed">
+                  <p style={{ color: theme.textSecondary }} className="text-xs max-w-2xl leading-relaxed">
                     {loc.content}
                   </p>
                 </div>
                 {block.buttonLabel && (
                   <a
                     href={block.buttonUrl || '#menu'}
-                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] font-bold text-xs shrink-0"
+                    style={primaryButtonStyle}
+                    className={`px-4 py-2.5 ${theme.buttonRadius} font-bold text-xs shrink-0`}
                   >
                     {block.buttonLabel}
                   </a>
@@ -2160,57 +3059,86 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
         {siteCmsConfig.modules.campaignsSectionEnabled && (
           <section
             id="kampanyalar"
-            className="rounded-2xl border border-[#D4A359]/20 bg-[#180B08] p-4 flex flex-wrap items-center justify-between gap-3"
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: theme.borderColor,
+              color: theme.textPrimary,
+            }}
+            className={`${theme.cardRadius} border p-4 flex flex-wrap items-center justify-between gap-3`}
           >
             <div className="flex items-center gap-2.5">
-              <Sparkles className="w-5 h-5 text-[#D4A359] shrink-0" />
+              <Sparkles className="w-5 h-5 shrink-0" style={{ color: theme.primaryColor }} />
               <div className="text-xs">
-                <span className="font-bold text-[#F5D69B]">{t.menu.campaignsTitle}</span>{' '}
-                <span className="text-[#DECAB4]">{t.menu.campaignsSub}</span>
+                <span className="font-bold" style={{ color: theme.primaryColor }}>
+                  {t.menu.campaignsTitle}
+                </span>{' '}
+                <span style={{ color: theme.textSecondary }}>{t.menu.campaignsSub}</span>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               {campaigns
                 .filter((c) => c.isActive)
-                .map((camp) => (
-                  <button
-                    key={camp.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedCouponCode(camp.couponCode);
-                      showToast(
-                        'success',
-                        `${t.menu.couponAppliedTitle}: ${camp.couponCode}`,
-                        camp.name
-                      );
-                    }}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
-                      selectedCouponCode === camp.couponCode
-                        ? 'bg-[#D4A359] text-[#1A0B08] border-[#D4A359]'
-                        : 'bg-[#24110D] text-[#F5D69B] border-[#D4A359]/35 hover:border-[#D4A359]'
-                    }`}
-                  >
-                    {camp.couponCode}
-                  </button>
-                ))}
+                .map((camp) => {
+                  const activeChip = selectedCouponCode === camp.couponCode;
+                  const discountLabel =
+                    camp.type === 'Sabit tutar indirimi'
+                      ? `-${camp.discountValue} ₺`
+                      : `%${camp.discountValue}`;
+                  return (
+                    <button
+                      key={camp.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCouponCode(camp.couponCode);
+                        showToast(
+                          'success',
+                          `${t.menu.couponAppliedTitle}: ${camp.couponCode}`,
+                          `${camp.name} (${discountLabel})`
+                        );
+                      }}
+                      style={
+                        activeChip
+                          ? {
+                              backgroundColor: theme.primaryColor,
+                              color: theme.ctaTextColor,
+                              borderColor: theme.primaryColor,
+                            }
+                          : {
+                              backgroundColor: theme.surfaceAltColor,
+                              color: theme.textPrimary,
+                              borderColor: theme.borderColor,
+                            }
+                      }
+                      className="px-3 py-1.5 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <span>{camp.couponCode}</span>
+                      <span className="opacity-75 text-[10px]">({discountLabel})</span>
+                    </button>
+                  );
+                })}
             </div>
           </section>
         )}
 
         {/* ===================================================================
-            GELİŞMİŞ FOTOĞRAF & VİDEO GALERİ SİSTEMİ (HEM RESİMLİ HEM VİDEOLU DESTEK)
+            GELİŞMİŞ FOTOĞRAF & VİDEO GALERİ SİSTEMİ
         =================================================================== */}
         {siteCmsConfig.modules.gallerySectionEnabled && (
           <section id="galeri" className="space-y-4 pt-2">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h2 className="font-editorial text-xl sm:text-2xl font-bold text-[#FFF7EB]">
+                <h2 style={{ color: theme.textPrimary }} className="font-editorial text-xl sm:text-2xl font-bold">
                   {t.gallery.sectionTitle}
                 </h2>
-                <p className="text-xs text-[#C4AC95]">{t.gallery.sectionSubtitle}</p>
+                <p style={{ color: theme.textSecondary }} className="text-xs">
+                  {t.gallery.sectionSubtitle}
+                </p>
               </div>
 
-              <div className="inline-flex items-center rounded-xl bg-[#1B0C09] border border-[#D4A359]/30 p-1 text-xs self-start">
+              <div
+                style={{ backgroundColor: theme.surfaceColor, borderColor: theme.borderColor }}
+                className="inline-flex items-center rounded-xl border p-1 text-xs self-start"
+              >
                 {(
                   [
                     { id: 'all', label: t.gallery.filterAll },
@@ -2222,11 +3150,12 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     key={tab.id}
                     type="button"
                     onClick={() => setGalleryFilter(tab.id)}
-                    className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    style={
                       galleryFilter === tab.id
-                        ? 'bg-[#D4A359] text-[#1A0B08]'
-                        : 'text-[#DECAB4] hover:text-white'
-                    }`}
+                        ? { backgroundColor: theme.primaryColor, color: theme.ctaTextColor }
+                        : { color: theme.textSecondary }
+                    }
+                    className="px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer"
                   >
                     {tab.label}
                   </button>
@@ -2246,7 +3175,8 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') setActiveLightboxMedia(item);
                     }}
-                    className="group relative rounded-2xl overflow-hidden border border-[#D4A359]/25 bg-[#1A0C09] h-52 cursor-pointer"
+                    style={{ backgroundColor: theme.surfaceColor, borderColor: theme.borderColor }}
+                    className={`group relative ${theme.cardRadius} overflow-hidden border h-52 cursor-pointer`}
                   >
                     <img
                       src={item.thumbnailUrl}
@@ -2256,7 +3186,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
 
                     {/* Üst Tür Rozeti */}
-                    <div className="absolute top-3 start-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/70 border border-[#D4A359]/40 text-[10px] font-bold text-[#F6D79E]">
+                    <div className="absolute top-3 start-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 border border-white/20 text-[10px] font-bold text-amber-200">
                       {item.type === 'video' ? (
                         <>
                           <Film className="w-3 h-3 text-emerald-400" />
@@ -2264,7 +3194,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                         </>
                       ) : (
                         <>
-                          <ImageIcon className="w-3 h-3 text-[#D4A359]" />
+                          <ImageIcon className="w-3 h-3 text-amber-300" />
                           <span>{item.category}</span>
                         </>
                       )}
@@ -2284,7 +3214,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                       <div className="text-xs font-bold text-[#FFF7EB] line-clamp-2">
                         {titleLoc}
                       </div>
-                      <span className="px-2.5 py-1 rounded-lg bg-[#D4A359]/20 border border-[#D4A359]/45 text-[10px] font-bold text-[#F6D79E] shrink-0">
+                      <span className="px-2.5 py-1 rounded-lg bg-black/60 border border-white/25 text-[10px] font-bold text-amber-200 shrink-0">
                         {item.type === 'video' ? t.gallery.watchVideoBtn : t.gallery.viewPhotoBtn}
                       </span>
                     </div>
@@ -2306,18 +3236,32 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                   return (
                     <div
                       key={card.id}
-                      className={`${siteCmsConfig.design.cardRadius} border border-[#D4A359]/25 bg-[#180B08] p-4 space-y-2`}
+                      style={{
+                        backgroundColor: theme.surfaceColor,
+                        borderColor: theme.borderColor,
+                        color: theme.textPrimary,
+                      }}
+                      className={`${theme.cardRadius} border p-4 space-y-2`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded-md bg-[#D4A359]/15 border border-[#D4A359]/35 text-[10px] font-bold text-[#F6D79E]">
+                        <span
+                          style={{
+                            backgroundColor: theme.surfaceAltColor,
+                            borderColor: theme.borderColor,
+                            color: theme.primaryColor,
+                          }}
+                          className="px-2 py-0.5 rounded-md border text-[10px] font-bold"
+                        >
                           {card.badgeText}
                         </span>
-                        <Award className="w-4 h-4 text-[#D4A359]" />
+                        <Award className="w-4 h-4" style={{ color: theme.primaryColor }} />
                       </div>
-                      <h3 className="font-editorial text-base font-bold text-[#FFF7EB]">
+                      <h3 style={{ color: theme.textPrimary }} className="font-editorial text-base font-bold">
                         {locCard.title}
                       </h3>
-                      <p className="text-xs text-[#C4AC95] leading-relaxed">{locCard.subtitle}</p>
+                      <p style={{ color: theme.textSecondary }} className="text-xs leading-relaxed">
+                        {locCard.subtitle}
+                      </p>
                     </div>
                   );
                 })}
@@ -2326,14 +3270,19 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       </main>
 
       {/* ===================================================================
-          ŞIK & UYUMLU FOOTER (SIRALI SOSYAL MEDYA İKONLARI, İLETİŞİM BİLGİLERİ, SAYFALAR VE ADMİN GİRİŞİ)
+          ŞIK & UYUMLU FOOTER (İLETİŞİM, SOSYAL MEDYA, ŞIK KONUM HARİTASI & UYGULAMA İKONLARI, PWA KARTI)
       =================================================================== */}
       <footer
         id="iletisim"
-        className="mt-10 border-t border-[#D4A359]/30 bg-gradient-to-b from-[#170906] to-[#0E0503] px-4 sm:px-6 pt-10 pb-8 text-xs text-[#DECAB4]"
+        style={{
+          backgroundColor: theme.footerBgColor || theme.surfaceAltColor,
+          borderColor: theme.borderColor,
+          color: theme.textSecondary,
+        }}
+        className="mt-10 border-t px-4 sm:px-6 pt-10 pb-8 text-xs"
       >
         <div className="max-w-6xl mx-auto space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+          <div className={`grid grid-cols-1 ${theme.footerColumns === 2 ? 'md:grid-cols-2' : 'md:grid-cols-12'} gap-8`}>
             {/* Sütun 1: Marka Kimliği & Kısa Açıklama */}
             <div className="md:col-span-4 space-y-3">
               <div className="flex items-center gap-3">
@@ -2343,13 +3292,20 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                   className="w-12 h-12 object-contain drop-shadow-[0_2px_10px_rgba(212,163,89,0.45)] shrink-0"
                 />
                 <div>
-                  <div className="font-editorial text-lg font-bold text-[#F6D79E]">
+                  <div
+                    style={{ color: theme.isLight ? theme.textPrimary : theme.primaryColor }}
+                    className="font-editorial text-lg font-bold"
+                  >
                     {siteCmsConfig.header.brandTitle}
                   </div>
-                  <div className="text-[11px] text-[#C4AC95]">{brandSubtitleByLang}</div>
+                  <div style={{ color: theme.textSecondary }} className="text-[11px]">
+                    {brandSubtitleByLang}
+                  </div>
                 </div>
               </div>
-              <p className="text-xs text-[#A88E76] leading-relaxed">{footerAboutByLang}</p>
+              <p style={{ color: theme.textSecondary }} className="text-xs leading-relaxed opacity-90">
+                {footerAboutByLang}
+              </p>
 
               {/* Yayındaki Sayfa & Menü Linkleri */}
               {footerNavItems.length > 0 && (
@@ -2364,7 +3320,8 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                           handleNavAction(nav.url);
                         }
                       }}
-                      className="text-[11px] font-semibold text-[#D4A359] hover:text-[#FFF7EB] transition-colors"
+                      style={{ color: theme.primaryColor }}
+                      className="text-[11px] font-semibold hover:opacity-80 transition-opacity"
                     >
                       {getNavLabelByLang(nav, currentLang)}
                     </a>
@@ -2376,7 +3333,8 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                         key={pg.id}
                         type="button"
                         onClick={() => setActiveCmsPage(pg)}
-                        className="text-[11px] font-semibold text-[#D4A359] hover:text-[#FFF7EB] transition-colors cursor-pointer"
+                        style={{ color: theme.primaryColor }}
+                        className="text-[11px] font-semibold hover:opacity-80 transition-opacity cursor-pointer"
                       >
                         {pg.title}
                       </button>
@@ -2385,71 +3343,109 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
               )}
             </div>
 
-            {/* Sütun 2: Sıralı İletişim Bilgileri (Site İle Uyumlu Altın/Bakır İkonlar) */}
+            {/* Sütun 2: Sıralı İletişim Bilgileri */}
             <div className="md:col-span-4 space-y-3">
-              <h3 className="font-editorial text-sm font-bold text-[#F6D79E] uppercase tracking-wider">
+              <h3
+                style={{ color: theme.isLight ? theme.textPrimary : theme.primaryColor }}
+                className="font-editorial text-sm font-bold uppercase tracking-wider"
+              >
                 {t.footer.contactTitle}
               </h3>
               <ul className="space-y-2.5">
                 <li className="flex items-start gap-2.5">
-                  <span className="w-7 h-7 rounded-lg bg-[#24110D] border border-[#D4A359]/30 flex items-center justify-center shrink-0 text-[#D4A359]">
+                  <span
+                    style={{
+                      backgroundColor: theme.surfaceColor,
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+                  >
                     <MapPin className="w-3.5 h-3.5" />
                   </span>
-                  <span className="pt-1 text-[#DECAB4] leading-snug">{addressByLang}</span>
+                  <span style={{ color: theme.textPrimary }} className="pt-1 leading-snug">
+                    {addressByLang}
+                  </span>
                 </li>
                 <li className="flex items-center gap-2.5">
-                  <span className="w-7 h-7 rounded-lg bg-[#24110D] border border-[#D4A359]/30 flex items-center justify-center shrink-0 text-[#D4A359]">
+                  <span
+                    style={{
+                      backgroundColor: theme.surfaceColor,
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+                  >
                     <Phone className="w-3.5 h-3.5" />
                   </span>
                   <a
                     href={`tel:${siteCmsConfig.contact.phoneCallRaw}`}
-                    className="font-mono font-bold text-[#F6D79E] hover:underline"
+                    style={{ color: theme.isLight ? theme.textPrimary : theme.primaryColor }}
+                    className="font-mono font-bold hover:underline"
                   >
                     {siteCmsConfig.contact.phoneDisplay}
                   </a>
                 </li>
                 <li className="flex items-center gap-2.5">
-                  <span className="w-7 h-7 rounded-lg bg-[#24110D] border border-[#D4A359]/30 flex items-center justify-center shrink-0 text-[#D4A359]">
+                  <span
+                    style={{
+                      backgroundColor: theme.surfaceColor,
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+                  >
                     <Mail className="w-3.5 h-3.5" />
                   </span>
                   <a
                     href={`mailto:${siteCmsConfig.contact.email}`}
-                    className="text-[#DECAB4] hover:text-[#F6D79E] transition-colors"
+                    style={{ color: theme.textPrimary }}
+                    className="hover:opacity-80 transition-opacity"
                   >
                     {siteCmsConfig.contact.email}
                   </a>
                 </li>
                 <li className="flex items-center gap-2.5">
-                  <span className="w-7 h-7 rounded-lg bg-[#24110D] border border-[#D4A359]/30 flex items-center justify-center shrink-0 text-[#D4A359]">
+                  <span
+                    style={{
+                      backgroundColor: theme.surfaceColor,
+                      borderColor: theme.borderColor,
+                      color: theme.primaryColor,
+                    }}
+                    className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+                  >
                     <Clock className="w-3.5 h-3.5" />
                   </span>
-                  <span className="text-[#DECAB4]">{workingHoursByLang}</span>
+                  <span style={{ color: theme.textPrimary }}>{workingHoursByLang}</span>
                 </li>
               </ul>
             </div>
 
-            {/* Sütun 3: Sıralı Sosyal Medya Hesapları (Site Rengi ve İkonlarıyla Tam Uyumlu) */}
+            {/* Sütun 3: Sıralı Sosyal Medya Hesapları */}
             {siteCmsConfig.modules.socialMediaBarEnabled && (
               <div className="md:col-span-4 space-y-3">
-                <h3 className="font-editorial text-sm font-bold text-[#F6D79E] uppercase tracking-wider">
+                <h3
+                  style={{ color: theme.isLight ? theme.textPrimary : theme.primaryColor }}
+                  className="font-editorial text-sm font-bold uppercase tracking-wider"
+                >
                   {t.footer.socialTitle}
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {siteCmsConfig.socialMedia
                     .filter((s) => s.isActive)
                     .map((soc) => {
-                      const renderMatchingGoldIcon = () => {
+                      const renderMatchingIcon = () => {
                         if (soc.platform === 'Instagram')
-                          return <Instagram className="w-4 h-4 text-[#D4A359] shrink-0" />;
+                          return <Instagram className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />;
                         if (soc.platform === 'Facebook')
-                          return <Facebook className="w-4 h-4 text-[#D4A359] shrink-0" />;
+                          return <Facebook className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />;
                         if (soc.platform === 'YouTube')
-                          return <Youtube className="w-4 h-4 text-[#D4A359] shrink-0" />;
+                          return <Youtube className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />;
                         if (soc.platform === 'WhatsApp')
-                          return <MessageCircle className="w-4 h-4 text-[#D4A359] shrink-0" />;
+                          return <MessageCircle className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />;
                         if (soc.platform === 'Google Maps')
-                          return <MapPin className="w-4 h-4 text-[#D4A359] shrink-0" />;
-                        return <Share2 className="w-4 h-4 text-[#D4A359] shrink-0" />;
+                          return <MapPin className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />;
+                        return <Share2 className="w-4 h-4 shrink-0" style={{ color: theme.primaryColor }} />;
                       };
                       return (
                         <a
@@ -2457,22 +3453,31 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                           href={soc.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="group p-2.5 rounded-xl border border-[#D4A359]/25 bg-[#1B0D09] hover:border-[#D4A359] hover:bg-[#26120D] transition-all flex items-center justify-between gap-2"
+                          style={{
+                            backgroundColor: theme.surfaceColor,
+                            borderColor: theme.borderColor,
+                            color: theme.textPrimary,
+                          }}
+                          className="group p-2.5 rounded-xl border hover:brightness-105 transition-all flex items-center justify-between gap-2"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <span className="w-8 h-8 rounded-lg bg-[#27130E] border border-[#D4A359]/30 flex items-center justify-center shrink-0 group-hover:bg-[#D4A359]/15 transition-colors">
-                              {renderMatchingGoldIcon()}
+                            <span
+                              style={{
+                                backgroundColor: theme.surfaceAltColor,
+                                borderColor: theme.borderColor,
+                              }}
+                              className="w-8 h-8 rounded-lg border flex items-center justify-center shrink-0"
+                            >
+                              {renderMatchingIcon()}
                             </span>
                             <div className="min-w-0">
-                              <div className="font-bold text-[#FFF7EB] text-xs truncate">
-                                {soc.platform}
-                              </div>
-                              <div className="text-[10px] text-[#B89D82] truncate">
+                              <div className="font-bold text-xs truncate">{soc.platform}</div>
+                              <div style={{ color: theme.textSecondary }} className="text-[10px] truncate">
                                 {soc.handleOrLabel}
                               </div>
                             </div>
                           </div>
-                          <ExternalLink className="w-3 h-3 text-[#D4A359]/60 group-hover:text-[#D4A359] shrink-0" />
+                          <ExternalLink className="w-3 h-3 shrink-0 opacity-60 group-hover:opacity-100" style={{ color: theme.primaryColor }} />
                         </a>
                       );
                     })}
@@ -2481,33 +3486,49 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             )}
           </div>
 
-          {/* Gelişmiş Harita & Çoklu Navigasyon Servisleri (Google Maps, Google Navigasyon, Apple Maps, Yandex, Waze) */}
-          <div className="py-2">
-            <RestaurantMapSection
-              mapSettings={siteCmsConfig.mapSettings}
-              contact={siteCmsConfig.contact}
-              lang={currentLang}
-            />
-          </div>
+          {/* Şık Footer Konum Haritası + Google Maps, Apple Maps, Waze, Yandex vb. Mini Başlatıcı İkonları */}
+          {siteCmsConfig.mapSettings?.enabled &&
+            siteCmsConfig.mapSettings?.showFooterMap !== false && (
+              <RestaurantMapSection
+                mapSettings={siteCmsConfig.mapSettings}
+                contact={siteCmsConfig.contact}
+                lang={currentLang}
+                compact
+                themeTokens={theme}
+              />
+            )}
 
-          {/* En Alt Çalışan PWA Uygulama İndirme Butonu & Kurulum Kartı (iOS / Android / PC) */}
-          <FooterPWACard
-            title={t.extras.pwaBottomTitle}
-            description={t.extras.pwaBottomDesc}
-            buttonLabel={t.extras.pwaBottomBtn}
-            installedLabel={t.extras.pwaInstalledText}
-          />
+          {/* En Alt Çalışan PWA Uygulama İndirme Butonu & Kurulum Kartı */}
+          {siteCmsConfig.pwaSettings?.enabled &&
+            siteCmsConfig.pwaSettings?.showFooterCard !== false && (
+              <FooterPWACard
+                title={t.extras.pwaBottomTitle}
+                description={t.extras.pwaBottomDesc}
+                buttonLabel={t.extras.pwaBottomBtn}
+                installedLabel={t.extras.pwaInstalledText}
+                pwaSettings={siteCmsConfig.pwaSettings}
+                themeTokens={theme}
+              />
+            )}
 
           {/* Alt Çizgi: Telif Hakkı ve Yönetici Paneli Giriş Butonu */}
-          <div className="pt-5 border-t border-[#D4A359]/20 flex flex-wrap items-center justify-between gap-3 text-xs text-[#A88E76]">
+          <div
+            style={{ borderColor: theme.borderColor, color: theme.textSecondary }}
+            className="pt-5 border-t flex flex-wrap items-center justify-between gap-3 text-xs"
+          >
             <div>{copyrightByLang}</div>
             {siteCmsConfig.footer.showAdminLoginButton && (
               <button
                 type="button"
                 onClick={() => setAdminLoginModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#24110D] hover:bg-[#331812] border border-[#D4A359]/40 text-[#F6D79E] font-bold text-xs cursor-pointer"
+                style={{
+                  backgroundColor: theme.surfaceColor,
+                  borderColor: theme.borderColor,
+                  color: theme.textPrimary,
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border font-bold text-xs cursor-pointer hover:opacity-90"
               >
-                <Lock className="w-3.5 h-3.5 text-[#D4A359]" />
+                <Lock className="w-3.5 h-3.5" style={{ color: theme.primaryColor }} />
                 <span>{t.footer.adminLoginBtn}</span>
               </button>
             )}
@@ -3095,24 +4116,33 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             <div className="grid grid-cols-2 gap-2">
               {WAITER_NEED_KEYS.map((key) => {
                 const item = t.waiterModal.needs[key];
-                const isSelected = selectedWaiterNeeds.includes(key);
+                const isBillOption = key === 'w-hesap';
+                const billBlocked = isBillOption && !openUnpaidBillCheck.allowed;
+                const isSelected = !billBlocked && selectedWaiterNeeds.includes(key);
                 return (
                   <button
                     key={key}
                     type="button"
+                    data-testid={`waiter-need-${key}`}
+                    disabled={billBlocked}
                     onClick={() => {
+                      if (billBlocked) return;
                       setSelectedWaiterNeeds((prev) =>
                         prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]
                       );
                     }}
-                    className={`p-3 rounded-xl border text-start transition-all cursor-pointer ${
-                      isSelected
-                        ? 'border-[#D4A359] bg-[#2D150E] text-white font-bold'
-                        : 'border-[#D4A359]/20 bg-[#140806] text-[#DECAB4]'
+                    className={`p-3 rounded-xl border text-start transition-all ${
+                      billBlocked
+                        ? 'border-neutral-700/50 bg-[#120806] text-neutral-500 opacity-50 cursor-not-allowed'
+                        : isSelected
+                        ? 'border-[#D4A359] bg-[#2D150E] text-white font-bold cursor-pointer'
+                        : 'border-[#D4A359]/20 bg-[#140806] text-[#DECAB4] cursor-pointer'
                     }`}
                   >
                     <div className="text-xs font-bold">{item?.label}</div>
-                    <div className="text-[10px] text-[#A88E76] mt-0.5">{item?.sub}</div>
+                    <div className="text-[10px] text-[#A88E76] mt-0.5">
+                      {billBlocked ? 'Açık hesap yok · Önce sipariş verin' : item?.sub}
+                    </div>
                   </button>
                 );
               })}
@@ -3564,9 +4594,11 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
               <div>
                 <span className="text-[11px] font-mono text-[#D4A359] font-bold">
                   {channel === 'QR'
-                    ? qrVerifiedTableId
-                      ? `${activeTableNumberBadge} · ${activeTable?.number}`
-                      : t.extras.qrUnverifiedBadge
+                    ? tableSelectionEnabled
+                      ? qrVerifiedTableId
+                        ? `${activeTableNumberBadge} · ${activeTable?.number}`
+                        : t.extras.qrUnverifiedBadge
+                      : 'Hızlı Sipariş · Masa Seçimsiz'
                     : channel === 'Paket servis'
                     ? `🛵 ${t.extras.courierBadge}`
                     : t.cartModal.channelPickup}
@@ -3607,22 +4639,41 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 ))}
               </div>
 
-              {channel === 'QR' && !qrVerifiedTableId && (
-                <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3 flex items-center justify-between gap-2">
-                  <div className="text-[11px] text-amber-200 leading-snug">
-                    {t.extras.qrRequiredOrderDesc}
+              {tableSelectionEnabled && channel === 'QR' && !qrVerifiedTableId && (
+                requireQrScan ? (
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3 flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-amber-200 leading-snug">
+                      {t.extras.qrRequiredOrderDesc}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCartDrawerOpen(false);
+                        setQrModalOpen(true);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#D4A359] text-[#1A0B08] font-bold text-[11px] shrink-0 cursor-pointer"
+                    >
+                      QR Okut
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCartDrawerOpen(false);
-                      setQrModalOpen(true);
-                    }}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#D4A359] text-[#1A0B08] font-bold text-[11px] shrink-0 cursor-pointer"
-                  >
-                    QR Okut
-                  </button>
-                </div>
+                ) : (
+                  <div className="rounded-xl border border-[#D4A359]/30 bg-[#22100C] p-3 space-y-1.5">
+                    <label className="block text-[11px] font-bold text-[#F5D69B]">
+                      Serbest Masa Seçimi (QR Zorunluluğu Kapalı)
+                    </label>
+                    <select
+                      value={selectedTableId}
+                      onChange={(e) => setSelectedTableId(e.target.value)}
+                      className="w-full rounded-lg border border-[#D4A359]/35 bg-[#120705] px-2.5 py-2 text-xs text-white"
+                    >
+                      {tables.map((tbl) => (
+                        <option key={tbl.id} value={tbl.id}>
+                          {tbl.number} · {tbl.area} ({tbl.capacity} kişi)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )
               )}
 
               {channel === 'Paket servis' && (
@@ -3734,7 +4785,7 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
 
               {cart.length > 0 && (
                 <form id="qr-order-form" onSubmit={handleCheckoutSubmit} className="space-y-3 pt-1">
-                  {/* Ödeme Yöntemi Seçimi (Sipariş Özeti Formunun En Üstünde Belirgin Gösterim) */}
+                  {/* Ödeme Zamanı & Ödeme Yöntemi Seçimi (Admin tarafından tek tek açılıp kapatılabilir) */}
                   <div
                     data-testid="checkout-payment-methods"
                     className="rounded-xl border-2 border-[#D4A359]/45 bg-[#120705] p-3 space-y-2.5 shadow-lg"
@@ -3744,63 +4795,199 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                         <CreditCard className="w-4 h-4 text-[#D4A359]" />
                         <span>{t.extras.paymentMethodLabel}</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
-                        Seçili: {paymentMethod}
+                      <span
+                        className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                          payTiming === 'now' && selectedPaymentObj?.allowPayNow
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-amber-500/20 text-amber-300'
+                        }`}
+                      >
+                        {payTiming === 'now' && selectedPaymentObj?.allowPayNow
+                          ? 'Şimdi Online Ödeme'
+                          : 'Kasa / POS / Havale'}
                       </span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                      {[
-                        { id: 'Kapıda / Masada Kart (POS)', label: t.extras.payCardPos },
-                        { id: 'Nakit', label: t.extras.payCash },
-                        { id: 'Online Kart (iyzico / PayTR)', label: t.extras.payOnline },
-                        { id: 'Yemek Kartı (Sodexo/Multinet)', label: t.extras.payMealCard },
-                        { id: 'Havale / EFT', label: t.extras.payTransfer },
-                      ].map((pm) => {
-                        const isSelected = paymentMethod === pm.id;
-                        return (
-                          <button
-                            key={pm.id}
-                            type="button"
-                            onClick={() => setPaymentMethod(pm.id)}
-                            className={`p-2.5 rounded-xl border text-start text-[11px] leading-tight font-semibold flex items-center justify-between gap-1.5 cursor-pointer transition-all ${
-                              isSelected
-                                ? 'border-[#D4A359] bg-[#31160F] text-[#F6D79E] ring-1 ring-[#D4A359]/60'
-                                : 'border-[#D4A359]/20 bg-[#1B0D09] text-[#DECAB4] hover:border-[#D4A359]/45'
-                            }`}
-                          >
-                            <span className="flex items-center gap-1.5 min-w-0">
-                              <Wallet className="w-3.5 h-3.5 text-[#D4A359] shrink-0" />
-                              <span className="truncate">{pm.label}</span>
-                            </span>
-                            {isSelected && (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
 
-                    {paymentMethod === 'Online Kart (iyzico / PayTR)' && (
-                      <div className="rounded-lg border border-emerald-500/35 bg-emerald-950/25 p-2.5 space-y-2 text-[11px]">
-                        <div className="flex items-center justify-between font-bold text-emerald-300">
-                          <span>256-Bit 3D Secure Online Tahsilat</span>
-                          <span className="font-mono text-[10px]">iyzico / PayTR</span>
+                    {/* Yalnızca hem sonradan hem şimdi ödeme yöntemleri aktifse zaman seçici gösterilir */}
+                    {payLaterMethods.length > 0 && payNowMethods.length > 0 && (
+                      <div
+                        data-testid="checkout-payment-timing"
+                        className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#1A0C08] border border-[#D4A359]/25"
+                      >
+                        <button
+                          type="button"
+                          data-testid="pay-later-option"
+                          onClick={() => {
+                            setPayTiming('later');
+                            if (payLaterMethods[0] && !payLaterMethods.some((m) => m.name === paymentMethod)) {
+                              setPaymentMethod(payLaterMethods[0].name);
+                            }
+                          }}
+                          className={`py-2 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                            payTiming === 'later'
+                              ? 'bg-[#D4A359] text-[#1A0B08] shadow'
+                              : 'text-[#DECAB4] hover:text-white'
+                          }`}
+                        >
+                          Kasada / POS / Havale
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="pay-now-option"
+                          onClick={() => {
+                            setPayTiming('now');
+                            if (payNowMethods[0] && !payNowMethods.some((m) => m.name === paymentMethod)) {
+                              setPaymentMethod(payNowMethods[0].name);
+                            }
+                          }}
+                          className={`py-2 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                            payTiming === 'now'
+                              ? 'bg-emerald-500 text-[#071A11] shadow'
+                              : 'text-emerald-300 hover:bg-emerald-500/15'
+                          }`}
+                        >
+                          Online Şimdi Öde
+                        </button>
+                      </div>
+                    )}
+
+                    {activePortalPaymentMethods.length === 0 ? (
+                      <div className="rounded-lg border border-rose-500/40 bg-rose-950/30 p-2.5 text-[11px] text-rose-200">
+                        Şu anda sipariş aşamasında aktif ödeme yöntemi bulunmuyor.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {(payTiming === 'now' && payNowMethods.length > 0
+                          ? payNowMethods
+                          : payLaterMethods.length > 0
+                          ? payLaterMethods
+                          : activePortalPaymentMethods
+                        ).map((pm) => {
+                          const isSelected = paymentMethod === pm.name;
+                          return (
+                            <button
+                              key={pm.id}
+                              type="button"
+                              data-testid={`checkout-pm-${pm.id}`}
+                              onClick={() => setPaymentMethod(pm.name)}
+                              className={`p-2.5 rounded-xl border text-start text-[11px] leading-tight font-semibold flex items-center justify-between gap-1.5 cursor-pointer transition-all ${
+                                isSelected
+                                  ? 'border-[#D4A359] bg-[#31160F] text-[#F6D79E] ring-1 ring-[#D4A359]/60'
+                                  : 'border-[#D4A359]/20 bg-[#1B0D09] text-[#DECAB4] hover:border-[#D4A359]/45'
+                              }`}
+                            >
+                              <span className="flex items-center gap-1.5 min-w-0">
+                                <Wallet className="w-3.5 h-3.5 text-[#D4A359] shrink-0" />
+                                <span className="truncate">{pm.name}</span>
+                              </span>
+                              {isSelected && (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Seçili yöntem Havale / EFT ise IBAN ve açıklama bilgisini göster */}
+                    {selectedPaymentObj?.type === 'transfer' && (
+                      <div
+                        data-testid="havale-eft-info-box"
+                        className="rounded-lg border border-[#D4A359]/40 bg-[#1B0D09] p-3 space-y-1.5 text-[11px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-[#F5D69B]">Havale / EFT Banka Bilgileri</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const ibanText = 'TR42 0006 2000 0000 0199 6019 96';
+                              if (navigator.clipboard?.writeText) {
+                                navigator.clipboard.writeText(ibanText).catch(() => {});
+                              }
+                              showToast('success', 'IBAN Kopyalandı', `${ibanText} panoya kopyalandı.`);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#D4A359] text-[#1A0B08] font-bold text-[10px] cursor-pointer"
+                          >
+                            <Copy className="w-3 h-3" /> IBAN Kopyala
+                          </button>
+                        </div>
+                        <div className="font-mono text-white select-all">
+                          TR42 0006 2000 0000 0199 6019 96
+                        </div>
+                        <div className="text-[#DECAB4]">
+                          Alıcı: ÖzTike Ciğer Gıda Ltd. Şti. · Ziraat Bankası
+                        </div>
+                        <div className="text-[#C4AC95] text-[10px]">
+                          Siparişiniz mutfağa iletilir; Havale/EFT dekontu kasa onayından sonra tahsil edilir.
+                        </div>
+                      </div>
+                    )}
+
+                    {payTiming === 'now' && selectedPaymentObj?.type === 'online_card' && (
+                      <div
+                        data-testid="online-card-payment-form"
+                        className="rounded-lg border border-emerald-500/35 bg-emerald-950/25 p-3 space-y-2 text-[11px]"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 font-bold text-emerald-300">
+                          <span>256-Bit 3D Secure Online Kart Ödemesi</span>
+                          <button
+                            type="button"
+                            data-testid="fill-test-card-btn"
+                            onClick={() => {
+                              setCardHolderName(customerName.trim() || 'Misafir Ödeme');
+                              setCardNumberInput('4543 6000 0000 0004');
+                              setCardExpiryInput('12/28');
+                              setCardCvvInput('987');
+                            }}
+                            className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[10px] hover:bg-emerald-500/30 cursor-pointer"
+                          >
+                            Test Kartı Doldur
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={cardHolderName}
+                          onChange={(e) => setCardHolderName(e.target.value)}
+                          placeholder="Kart Üzerindeki Ad Soyad"
+                          aria-label="Kart Üzerindeki Ad Soyad"
+                          className="w-full rounded-lg border border-emerald-500/30 bg-[#0B1712] px-2.5 py-1.5 text-xs text-white"
+                        />
+                        <input
+                          type="text"
+                          value={cardNumberInput}
+                          onChange={(e) => setCardNumberInput(e.target.value)}
+                          placeholder="Kart Numarası (16 Hane)"
+                          aria-label="Kart Numarası"
+                          className="w-full rounded-lg border border-emerald-500/30 bg-[#0B1712] px-2.5 py-1.5 font-mono text-xs text-white"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={cardExpiryInput}
+                            onChange={(e) => setCardExpiryInput(e.target.value)}
+                            placeholder="SKT (AA/YY)"
+                            aria-label="Son Kullanma Tarihi"
+                            className="w-full rounded-lg border border-emerald-500/30 bg-[#0B1712] px-2.5 py-1.5 font-mono text-xs text-white"
+                          />
+                          <input
+                            type="password"
+                            maxLength={4}
+                            value={cardCvvInput}
+                            onChange={(e) => setCardCvvInput(e.target.value)}
+                            placeholder="CVV"
+                            aria-label="Güvenlik Kodu CVV"
+                            className="w-full rounded-lg border border-emerald-500/30 bg-[#0B1712] px-2.5 py-1.5 font-mono text-xs text-white"
+                          />
                         </div>
                         <p className="text-[#DECAB4] leading-snug">
-                          Siparişi onayladığınızda seçilen tutar ({cartFinalTotal.toFixed(2)} ₺) güvenli 3D Secure katmanı üzerinden otomatik tahsil edilip fişiniz düzenlenir.
+                          Siparişi onayladığınızda {cartFinalTotal.toFixed(2)} ₺ anında tahsil edilir ve dijital fişiniz düzenlenir.
                         </p>
                       </div>
                     )}
 
-                    {paymentMethod === 'Havale / EFT' && (
-                      <div className="rounded-lg border border-[#D4A359]/35 bg-[#1B0D09] p-2.5 space-y-1 text-[11px]">
-                        <div className="font-bold text-[#F5D69B]">ÖzTike Ciğer · Halil Usta IBAN</div>
-                        <div className="font-mono text-white select-all">
-                          TR42 0006 2000 0000 0199 6019 96
-                        </div>
-                        <div className="text-[#C4AC95]">
-                          Açıklama kısmına adınızı veya masa numaranızı yazmanız yeterlidir.
-                        </div>
+                    {payTiming === 'now' && selectedPaymentObj?.type === 'wallet' && (
+                      <div className="rounded-lg border border-emerald-500/35 bg-emerald-950/25 p-2.5 text-[11px] text-emerald-200">
+                        Tek dokunuşla cihaz cüzdanınız üzerinden {cartFinalTotal.toFixed(2)} ₺ güvenli ödeme onaylanarak siparişiniz mutfağa iletilir.
                       </div>
                     )}
                   </div>
@@ -3949,18 +5136,35 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 </form>
               )}
 
-              {/* Çok Aşamalı Canlı Sipariş & Kurye Takibi */}
-              {activeTableOrders.length > 0 && (
-                <div className="rounded-2xl border border-emerald-500/35 bg-emerald-950/25 p-3.5 space-y-2.5">
+              {/* Çok Aşamalı Canlı Sipariş & Kurye Takibi (Yönetici Panelden Açılıp Kapatılabilir — Varsayılan Pasif) */}
+              {orderTrackingEnabled && activeTableOrders.length > 0 && (
+                <div
+                  data-testid="order-tracking-panel"
+                  className="rounded-2xl border border-emerald-500/35 bg-emerald-950/25 p-3.5 space-y-2.5"
+                >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-bold text-emerald-300">
                       {t.cartModal.liveOrderStatusTitle}
                     </span>
-                    {qrVerifiedTableId && (
+                    {effectiveQrTableId && (
                       <button
                         type="button"
+                        data-testid="cart-request-bill-btn"
+                        disabled={!openUnpaidBillCheck.allowed}
                         onClick={() => {
-                          onRequestBill(qrVerifiedTableId);
+                          if (!openUnpaidBillCheck.allowed) {
+                            showToast(
+                              'error',
+                              'Açık Hesap Bulunmuyor',
+                              openUnpaidBillCheck.reason || 'Hesap istemek için önce sipariş veriniz.'
+                            );
+                            return;
+                          }
+                          const billRes = onRequestBill(effectiveQrTableId);
+                          if (billRes && billRes.success === false) {
+                            showToast('error', 'Açık Hesap Bulunmuyor', billRes.message);
+                            return;
+                          }
                           showToast(
                             'success',
                             t.cartModal.requestBillBtn,
@@ -3968,13 +5172,18 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                           );
                           triggerCustomerNotification(
                             t.cartModal.requestBillBtn,
-                            `${activeTableNumberBadge} hesap talebi iletildi.`
+                            `${activeTableNumberBadge} hesap talebi iletildi.`,
+                            { type: 'cart' }
                           );
                         }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#D4A359]/20 border border-[#D4A359]/40 text-[#F5D69B] text-[11px] font-semibold cursor-pointer"
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-semibold ${
+                          openUnpaidBillCheck.allowed
+                            ? 'bg-[#D4A359]/20 border-[#D4A359]/40 text-[#F5D69B] cursor-pointer'
+                            : 'bg-neutral-800/40 border-neutral-700/40 text-neutral-500 opacity-50 cursor-not-allowed'
+                        }`}
                       >
                         <Receipt className="w-3 h-3" />
-                        {t.cartModal.requestBillBtn}
+                        {openUnpaidBillCheck.allowed ? t.cartModal.requestBillBtn : 'Açık Hesap Yok'}
                       </button>
                     )}
                   </div>
@@ -4005,6 +5214,37 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                             <div className="text-[11px] text-[#C4AC95]">
                               {ord.items.length} · {ord.totalAmount.toFixed(2)} ₺
                               {ord.paymentMethod ? ` (${ord.paymentMethod})` : ''}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  ord.paymentStatus === 'Ödendi'
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-amber-500/20 text-amber-300'
+                                }`}
+                              >
+                                {ord.paymentStatus === 'Ödendi'
+                                  ? `✓ Ödendi${ord.receiptNumber ? ` · Fiş: ${ord.receiptNumber}` : ''}`
+                                  : 'Ödeme Bekleniyor'}
+                              </span>
+                              {ord.paymentStatus === 'Ödendi' && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    printThermalReceipt(ord, {
+                                      ...siteCmsConfig.receiptSettings,
+                                      companyName:
+                                        siteCmsConfig.receiptSettings?.companyName ||
+                                        siteCmsConfig.generalSettings.companyLegalName,
+                                      taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                                      logoUrl: siteCmsConfig.header.logoUrl,
+                                    })
+                                  }
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D4A359]/20 text-[#F5D69B] text-[10px] font-semibold hover:bg-[#D4A359]/30 cursor-pointer"
+                                >
+                                  <Receipt className="w-3 h-3" /> Fiş Yazdır
+                                </button>
+                              )}
                             </div>
                             {ord.courierName && (
                               <div className="text-[10px] text-emerald-300 font-semibold mt-0.5">
@@ -4039,6 +5279,42 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Sipariş takibi pasifken açık hesap varsa yalnızca Hesap İste kısayolu göster */}
+              {!orderTrackingEnabled && effectiveQrTableId && openUnpaidBillCheck.allowed && (
+                <div
+                  data-testid="open-bill-action-bar"
+                  className="rounded-xl border border-[#D4A359]/35 bg-[#22100C] p-3 flex items-center justify-between gap-2"
+                >
+                  <div className="text-xs">
+                    <div className="font-bold text-[#F5D69B]">Açık Hesabınız</div>
+                    <div className="font-mono text-[#DECAB4]">
+                      {openUnpaidBillCheck.totalOpenAmount.toFixed(2)} ₺ ödenmemiş tutar
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="cart-request-bill-btn"
+                    onClick={() => {
+                      const billRes = onRequestBill(effectiveQrTableId);
+                      if (billRes && billRes.success === false) {
+                        showToast('error', 'Açık Hesap Bulunmuyor', billRes.message);
+                        return;
+                      }
+                      showToast('success', t.cartModal.requestBillBtn, `${activeTableNumberBadge}`);
+                      triggerCustomerNotification(
+                        t.cartModal.requestBillBtn,
+                        `${activeTableNumberBadge} hesap talebi iletildi.`,
+                        { type: 'cart' }
+                      );
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#D4A359] text-[#1A0B08] font-bold text-xs cursor-pointer"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>{t.cartModal.requestBillBtn}</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -4084,17 +5360,33 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 {cart.length > 0 && (
                   <div className="flex items-center justify-between text-[11px] pt-1 text-[#DECAB4]">
                     <span>Ödeme Yöntemi:</span>
-                    <span className="font-bold text-[#D4A359]">{paymentMethod}</span>
+                    <span className="font-bold text-[#D4A359]">
+                      {payTiming === 'now' && selectedPaymentObj?.allowPayNow
+                        ? `Şimdi Öde · ${paymentMethod}`
+                        : paymentMethod || 'Tanımlı yöntem yok'}
+                    </span>
                   </div>
                 )}
               </div>
               <button
                 type="submit"
                 form="qr-order-form"
-                disabled={cart.length === 0 || !isOnline}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] font-bold text-xs sm:text-sm shadow-lg disabled:opacity-40 cursor-pointer"
+                data-testid="checkout-submit-btn"
+                disabled={cart.length === 0 || !isOnline || activePortalPaymentMethods.length === 0}
+                style={primaryButtonStyle}
+                className="w-full py-3.5 rounded-xl font-bold text-xs sm:text-sm shadow-lg disabled:opacity-40 cursor-pointer"
               >
-                {t.cartModal.submitOrderBtn} ({channel === 'QR' ? (qrVerifiedTableId ? activeTableNumberBadge : 'QR Gerekli') : channel})
+                {payTiming === 'now' && selectedPaymentObj?.allowPayNow
+                  ? `Ödemeyi Tamamla & Siparişi Gönder (${cartFinalTotal.toFixed(2)} ₺)`
+                  : `${siteCmsConfig.design.orderButtonLabelTr || t.cartModal.submitOrderBtn} (${
+                      channel === 'QR'
+                        ? tableSelectionEnabled
+                          ? effectiveQrTableId
+                            ? activeTableNumberBadge
+                            : 'Masa Seç'
+                          : 'Hızlı Sipariş'
+                        : channel
+                    })`}
               </button>
             </div>
           </div>
@@ -4932,7 +6224,11 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       ===================================================================== */}
       <nav
         aria-label="Alt Hızlı Erişim Menüsü"
-        className="fixed bottom-0 inset-x-0 z-40 bg-[#140806]/95 backdrop-blur-md border-t border-[#D4A359]/35 px-2 sm:px-4 py-2 shadow-[0_-8px_30px_rgba(0,0,0,0.8)]"
+        style={{
+          backgroundColor: theme.isLight ? 'rgba(246, 241, 231, 0.96)' : theme.backgroundColor,
+          borderColor: theme.borderColor,
+        }}
+        className="fixed bottom-0 inset-x-0 z-40 backdrop-blur-md border-t px-2 sm:px-4 py-2 shadow-[0_-8px_30px_rgba(0,0,0,0.45)]"
       >
         <div className="max-w-3xl mx-auto grid grid-cols-5 gap-1.5 sm:gap-2.5">
           {/* 1. TELEFON */}
@@ -4945,9 +6241,14 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
                 `${siteCmsConfig.contact.phoneDisplay} aranıyor...`
               )
             }
-            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#22100C] hover:bg-[#2F1610] border border-[#D4A359]/25 text-[#F6D79E] transition-colors cursor-pointer"
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: theme.borderColor,
+              color: theme.textPrimary,
+            }}
+            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl border hover:opacity-90 transition-all cursor-pointer"
           >
-            <Phone className="w-4 h-4 sm:w-5 sm:h-5 text-[#D4A359] nav-icon-pulse-1" />
+            <Phone className="w-4 h-4 sm:w-5 sm:h-5 nav-icon-pulse-1" style={{ color: theme.primaryColor }} />
             <span className="text-[10px] sm:text-xs font-bold mt-1 truncate">
               {t.bottomNav.phone}
             </span>
@@ -4960,9 +6261,14 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             )}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#22100C] hover:bg-[#2F1610] border border-emerald-500/30 text-emerald-300 transition-colors cursor-pointer"
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: 'rgba(16, 185, 129, 0.35)',
+              color: theme.isLight ? '#047857' : '#6EE7B7',
+            }}
+            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl border hover:opacity-90 transition-all cursor-pointer"
           >
-            <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 nav-icon-pulse-2" />
+            <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 nav-icon-pulse-2" />
             <span className="text-[10px] sm:text-xs font-bold mt-1 truncate">
               {t.bottomNav.whatsapp}
             </span>
@@ -4972,7 +6278,8 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
           <button
             type="button"
             onClick={() => setCartDrawerOpen(true)}
-            className="relative flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#1A0B08] shadow-lg hover:brightness-110 transition-all cursor-pointer"
+            style={primaryButtonStyle}
+            className="relative flex flex-col items-center justify-center py-2 px-1 rounded-xl shadow-lg hover:brightness-110 transition-all cursor-pointer"
           >
             <div className="flex items-center gap-1">
               <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5 shrink-0 nav-icon-pulse-3" />
@@ -4983,11 +6290,15 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
             </span>
           </button>
 
-          {/* 4. GARSON (SADECE QR KOD OKUTAN MASALAR ÇAĞIRABİLİR) */}
+          {/* 4. GARSON */}
           <button
             type="button"
             onClick={() => {
-              const check = canAccessQrProtectedFeature(qrVerifiedTableId, 'waiter_call');
+              const check = canAccessQrProtectedFeature(
+                effectiveQrTableId,
+                'waiter_call',
+                tableSelectionEnabled
+              );
               if (!check.allowed) {
                 showToast('error', t.extras.qrRequiredTitle, t.extras.qrRequiredWaiterDesc);
                 setQrModalOpen(true);
@@ -4995,21 +6306,31 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
               }
               setWaiterModalOpen(true);
             }}
-            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#22100C] hover:bg-[#2F1610] border border-[#D4A359]/40 text-[#FFF6E9] transition-colors cursor-pointer"
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: theme.borderColor,
+              color: theme.textPrimary,
+            }}
+            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl border hover:opacity-90 transition-all cursor-pointer"
           >
-            <BellRing className="w-4 h-4 sm:w-5 sm:h-5 text-[#E5A94E] nav-icon-pulse-4" />
+            <BellRing className="w-4 h-4 sm:w-5 sm:h-5 nav-icon-pulse-4" style={{ color: theme.primaryColor }} />
             <span className="text-[10px] sm:text-xs font-bold mt-1 truncate">
               {t.bottomNav.waiter}
             </span>
           </button>
 
-          {/* 5. ASİSTAN (ÜCRETSİZ YAPAY ZEKÂ LEZZET ASİSTANI) */}
+          {/* 5. ASİSTAN */}
           <button
             type="button"
             onClick={() => setAiModalOpen(true)}
-            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#22100C] hover:bg-[#2F1610] border border-[#D4A359]/40 text-[#F6D79E] transition-colors cursor-pointer"
+            style={{
+              backgroundColor: theme.surfaceColor,
+              borderColor: theme.borderColor,
+              color: theme.textPrimary,
+            }}
+            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl border hover:opacity-90 transition-all cursor-pointer"
           >
-            <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-[#D4A359] nav-icon-pulse-5" />
+            <Bot className="w-4 h-4 sm:w-5 sm:h-5 nav-icon-pulse-5" style={{ color: theme.primaryColor }} />
             <span className="text-[10px] sm:text-xs font-bold mt-1 truncate">
               {t.bottomNav.assistant}
             </span>
@@ -5018,84 +6339,131 @@ export const CustomerQRPortal: React.FC<CustomerQRPortalProps> = ({
       </nav>
 
       {/* =====================================================================
-          AÇILIR POP-UP DUYURU & KAMPANYA MODALI (PROMO POPUP)
+          14. AÇILIR KAPANIR POPUP PENCERE DUYURUSU (Admin Panelden Tam Yönetilebilir)
       ===================================================================== */}
-      {showPromoPopup && siteCmsConfig.promoPopup?.enabled && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="relative w-full max-w-md rounded-3xl border-2 border-[#D4A359] bg-gradient-to-b from-[#22100C] to-[#120806] text-[#FFF6E9] p-6 shadow-2xl overflow-hidden space-y-4">
-            {/* Kapat Butonu */}
-            <button
-              type="button"
-              onClick={handleDismissPromoPopup}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-black/60 border border-[#D4A359]/30 text-neutral-300 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
-              aria-label="Kapat"
-            >
-              <X className="w-4 h-4" />
-            </button>
+      {promoPopupOpen && siteCmsConfig.promoPopup?.enabled && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Duyuru Popup Penceresi"
+          data-testid="promo-popup-modal"
+          className="fixed inset-0 z-[150] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            style={{
+              backgroundColor: siteCmsConfig.promoPopup.bgColor || '#180B08',
+              color: siteCmsConfig.promoPopup.textColor || '#FFF6E9',
+              borderColor: siteCmsConfig.promoPopup.accentColor || '#D4A359',
+            }}
+            className="w-full max-w-md rounded-3xl border overflow-hidden shadow-2xl relative animate-in fade-in zoom-in-95 duration-200"
+          >
+            {siteCmsConfig.promoPopup.dismissible !== false && (
+              <button
+                type="button"
+                data-testid="promo-popup-close-btn"
+                onClick={dismissPromoPopup}
+                aria-label="Duyuru Penceresini Kapat"
+                className="absolute top-3 end-3 z-10 w-8 h-8 rounded-full bg-black/60 text-white hover:bg-black/85 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
 
-            {/* Rozet */}
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#D4A359]/20 border border-[#D4A359]/40 text-[#F5D69B] text-xs font-bold uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{siteCmsConfig.promoPopup.badgeText || 'Özel Fırsat'}</span>
-            </div>
-
-            {/* Görsel */}
-            {siteCmsConfig.promoPopup.imageUrl && (
-              <div className="w-full h-44 rounded-2xl overflow-hidden border border-[#D4A359]/30 bg-black/40">
+            {siteCmsConfig.promoPopup.videoUrl ? (
+              <video
+                src={siteCmsConfig.promoPopup.videoUrl}
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="w-full h-44 object-cover"
+              />
+            ) : (
+              siteCmsConfig.promoPopup.imageUrl && (
                 <img
                   src={siteCmsConfig.promoPopup.imageUrl}
                   alt={siteCmsConfig.promoPopup.titleTr}
-                  className="w-full h-full object-cover"
+                  className="w-full h-44 object-cover"
                 />
-              </div>
+              )
             )}
 
-            {/* Başlık ve Metin */}
-            <div className="space-y-1.5 text-center">
-              <h3 className="text-xl font-black text-[#F5D69B]">
-                {siteCmsConfig.promoPopup.titleTr || 'ÖzTike Lezzet Kampanyası'}
-              </h3>
-              <p className="text-xs text-[#C4AC95] leading-relaxed">
-                {siteCmsConfig.promoPopup.bodyTr || 'Gaziantep Şahinbey zırh kıyması ve meşe közünde taze kuzu ciğeri siparişinizde geçerli indirim fırsatını kaçırmayın!'}
-              </p>
-            </div>
-
-            {/* Kupon Kodu Alanı */}
-            {siteCmsConfig.promoPopup.couponCode && (
-              <div className="rounded-2xl border border-dashed border-[#D4A359]/60 bg-[#160805] p-3 flex items-center justify-between gap-2">
-                <div className="text-left">
-                  <div className="text-[10px] text-neutral-400 font-semibold uppercase">İndirim Kuponu</div>
-                  <div className="font-mono font-bold text-sm text-[#F5D69B]">
-                    {siteCmsConfig.promoPopup.couponCode}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (navigator.clipboard) {
-                      void navigator.clipboard.writeText(siteCmsConfig.promoPopup.couponCode);
-                    }
-                    setCopiedPromoCode(true);
-                    setSelectedCouponCode(siteCmsConfig.promoPopup.couponCode);
-                    showToast('success', 'Kupon Uygulandı', `${siteCmsConfig.promoPopup.couponCode} kupon kodu sepetinize tanımlandı.`);
-                    setTimeout(() => setCopiedPromoCode(false), 2500);
+            <div className="p-5 space-y-3">
+              {siteCmsConfig.promoPopup.badgeText && (
+                <span
+                  style={{
+                    backgroundColor: siteCmsConfig.promoPopup.accentColor || '#D4A359',
+                    color: '#180B08',
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-[#D4A359] text-[#140806] font-bold text-xs hover:bg-[#C5A059] cursor-pointer transition-colors"
+                  className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase"
                 >
-                  {copiedPromoCode ? '✓ Tanımlandı' : 'Kopyala & Kullan'}
-                </button>
-              </div>
-            )}
+                  {siteCmsConfig.promoPopup.badgeText}
+                </span>
+              )}
 
-            {/* Aksiyon Butonları */}
-            <div className="pt-2 flex gap-3">
-              <button
-                type="button"
-                onClick={handleDismissPromoPopup}
-                className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-[#D4A359] to-[#B0782C] text-[#140806] font-extrabold text-sm hover:brightness-110 cursor-pointer shadow-lg"
-              >
-                Menüyü İncele &amp; Sipariş Ver
-              </button>
+              <h3 className="font-editorial text-xl font-bold leading-snug">
+                {currentLang === 'en'
+                  ? siteCmsConfig.promoPopup.titleEn || siteCmsConfig.promoPopup.titleTr
+                  : currentLang === 'ar'
+                  ? siteCmsConfig.promoPopup.titleAr || siteCmsConfig.promoPopup.titleTr
+                  : siteCmsConfig.promoPopup.titleTr}
+              </h3>
+
+              <p className="text-xs opacity-90 leading-relaxed">
+                {currentLang === 'en'
+                  ? siteCmsConfig.promoPopup.bodyEn || siteCmsConfig.promoPopup.bodyTr
+                  : currentLang === 'ar'
+                  ? siteCmsConfig.promoPopup.bodyAr || siteCmsConfig.promoPopup.bodyTr
+                  : siteCmsConfig.promoPopup.bodyTr}
+              </p>
+
+              {siteCmsConfig.promoPopup.couponCode && (
+                <div
+                  style={{ borderColor: siteCmsConfig.promoPopup.accentColor || '#D4A359' }}
+                  className="rounded-xl border border-dashed bg-black/25 px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                >
+                  <span className="opacity-75">Kupon Kodu:</span>
+                  <span
+                    style={{ color: siteCmsConfig.promoPopup.accentColor || '#D4A359' }}
+                    className="font-mono font-extrabold tracking-wider"
+                  >
+                    {siteCmsConfig.promoPopup.couponCode}
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <a
+                  href={siteCmsConfig.promoPopup.ctaUrl || '#menu'}
+                  onClick={() => {
+                    if (siteCmsConfig.promoPopup.couponCode) {
+                      setSelectedCouponCode(siteCmsConfig.promoPopup.couponCode);
+                      showToast(
+                        'success',
+                        'Kupon Sepete Eklendi',
+                        `${siteCmsConfig.promoPopup.couponCode} kuponu sepetinize tanımlandı.`
+                      );
+                    }
+                    dismissPromoPopup();
+                  }}
+                  style={{
+                    backgroundColor: siteCmsConfig.promoPopup.accentColor || '#D4A359',
+                    color: '#180B08',
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-center font-extrabold text-xs hover:brightness-110 transition-all cursor-pointer"
+                >
+                  {siteCmsConfig.promoPopup.ctaLabelTr || 'Menüyü İncele'}
+                </a>
+                {siteCmsConfig.promoPopup.dismissible !== false && (
+                  <button
+                    type="button"
+                    onClick={dismissPromoPopup}
+                    className="px-3.5 py-2.5 rounded-xl border border-white/20 text-xs font-semibold hover:bg-white/10 cursor-pointer"
+                  >
+                    Kapat
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

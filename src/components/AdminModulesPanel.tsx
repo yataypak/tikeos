@@ -32,16 +32,18 @@ import {
   Star,
   MessageSquareWarning,
   Building2,
-  Settings,
   Sliders,
   Eye,
   EyeOff,
-  Activity,
-  Globe,
-  Radio,
-  Network,
-  ShieldCheck,
   RefreshCw,
+  Globe,
+  Smartphone,
+  Archive,
+  Video,
+  Wallet,
+  Settings,
+  Power,
+  Search,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -82,15 +84,30 @@ import {
   type StockMovement,
   type ReservationItem,
   type WaiterServiceCallRecord,
+  type ArchiveHistoryEntry,
+  type MapProviderMode,
+  type FreeMapProviderId,
+  type PaidMapProviderId,
+  type OrderFilterCriteria,
   calculateRecipeMetrics,
+  upsertProductRecipeLine,
+  removeProductRecipeLine,
+  validatePluginJsonConfig,
   generateReceiptAndInvoiceNumbers,
+  buildDynamicWebManifest,
+  filterOrdersByMultiCriteria,
+  roundCurrency,
 } from '../core/restaurantEngine';
 import { AdminSiteBuilderManager } from './AdminSiteBuilderManager';
-import { AdminArchiveManager } from './AdminArchiveManager';
-import { AdminPwaManager } from './AdminPwaManager';
-import { AdminMapManager } from './AdminMapManager';
 import { type SiteCmsConfig } from '../data/siteCmsStore';
-import { printThermalReceipt, downloadThermalReceiptHtml } from '../utils/receiptPrinter';
+import {
+  printThermalReceipt,
+  downloadThermalReceiptHtml,
+  buildThermalReceiptInnerMarkup,
+} from '../utils/receiptPrinter';
+import { RestaurantMapSection, KonumNavigasyonu } from './RestaurantMapSection';
+import { usePWAInstall } from './BrandIdentity';
+import { OrderMultiFilterBar } from './OrderMultiFilterBar';
 
 interface AdminModulesPanelProps {
   activeModuleId: number;
@@ -111,6 +128,22 @@ interface AdminModulesPanelProps {
   onRefundOrderSeparately: (orderId: string, amount: number, reason: string) => void;
   tables: DiningTableItem[];
   onChangeTableStatus?: (tableId: string, status: TableStatus) => void;
+  onAddTable?: (tbl: {
+    number: string;
+    area: string;
+    capacity: number;
+    waiterName: string;
+    qrCodeNumber: string;
+  }) => { success: boolean; message: string };
+  onUpdateTable?: (tbl: {
+    id: string;
+    number: string;
+    area: string;
+    capacity: number;
+    waiterName: string;
+    qrCodeNumber: string;
+  }) => { success: boolean; message: string };
+  onDeleteTable?: (tableId: string) => { success: boolean; message: string };
   stocks: StockItem[];
   stockMovements: StockMovement[];
   onRecordStockOperation: (payload: {
@@ -120,14 +153,20 @@ interface AdminModulesPanelProps {
     note: string;
   }) => void;
   customers: CustomerRecord[];
-  onAddCustomer: (c: Omit<CustomerRecord, 'id' | 'points' | 'walletBalance' | 'totalOrders' | 'totalSpent'>) => void;
+  onAddCustomer: (c: Omit<CustomerRecord, 'id' | 'points' | 'walletBalance' | 'totalOrders' | 'totalSpent'> & { points?: number; walletBalance?: number }) => void;
+  onUpdateCustomer?: (c: CustomerRecord) => void;
+  onDeleteCustomer?: (id: string) => void;
   onAdjustLoyaltyPoints: (customerId: string, delta: number, reason: string) => void;
   campaigns: CampaignRecord[];
   onAddCampaign: (c: Omit<CampaignRecord, 'id' | 'usedCount'>) => void;
+  onUpdateCampaign?: (c: CampaignRecord) => void;
+  onDeleteCampaign?: (campaignId: string) => void;
   reservations: ReservationItem[];
   onUpdateReservationStatus: (resId: string, status: ReservationItem['status']) => void;
+  onAddReservation?: (r: Omit<ReservationItem, 'id' | 'status'>) => { success: boolean; message: string };
+  onUpdateReservation?: (r: ReservationItem) => void;
+  onDeleteReservation?: (resId: string) => void;
   staff: StaffMember[];
-  onAddStaff: (s: Omit<StaffMember, 'id' | 'ordersHandledToday' | 'salesToday'>) => void;
   financeLedger: FinanceLedgerItem[];
   onAddFinanceEntry: (entry: Omit<FinanceLedgerItem, 'id' | 'date'>) => void;
   cmsPages: CMSPageItem[];
@@ -140,7 +179,12 @@ interface AdminModulesPanelProps {
   onTestIntegration: (id: string) => void;
   onToggleIntegrationMode: (id: string) => void;
   onUpdateIntegration?: (integration: IntegrationPluginItem) => void;
-  onToggleIntegrationActive?: (id: string) => void;
+  onAddIntegration?: (integration: Omit<IntegrationPluginItem, 'id' | 'lastTested'>) => void;
+  onDeleteIntegration?: (id: string) => void;
+  archiveHistory?: ArchiveHistoryEntry[];
+  onArchiveDaySummary?: (reason?: string) => void;
+  onDeleteArchiveEntry?: (id: string) => void;
+  onClearArchiveHistory?: () => void;
   branches: BranchItem[];
   onToggleBranchActive: (id: string) => void;
   onAddBranch?: (branch: Omit<BranchItem, 'id' | 'dailyRevenue' | 'activeTables'>) => void;
@@ -164,6 +208,8 @@ interface AdminModulesPanelProps {
   waiterCalls?: WaiterServiceCallRecord[];
   onDispatchWaiterCall?: (callId: string) => void;
   onResolveWaiterCall?: (callId: string, tableId: string) => void;
+  onDeleteWaiterCall?: (callId: string) => void;
+  onClearCompletedWaiterCalls?: () => void;
   onAssignOrderCourier?: (orderId: string, courierName: string) => void;
   onUpdateCourierDeliveryState?: (
     orderId: string,
@@ -171,22 +217,6 @@ interface AdminModulesPanelProps {
   ) => void;
   onSettleOrderPayment?: (orderId: string, amount: number, method: string) => void;
   onIssueOrderReceiptAndInvoice?: (orderId: string) => void;
-  onDeleteOrder?: (id: string) => void;
-  onDeleteWaiterCall?: (id: string) => void;
-  onAddTable?: (table: Omit<DiningTableItem, 'id' | 'qrToken' | 'qrRevoked'>) => void;
-  onUpdateTable?: (table: DiningTableItem) => void;
-  onDeleteTable?: (id: string) => void;
-  onResetTableBill?: (tableId: string) => void;
-  onAddStockItem?: (item: Omit<StockItem, 'id'>) => void;
-  onUpdateStockItem?: (item: StockItem) => void;
-  onDeleteStockItem?: (id: string) => void;
-  onUpdateReservation?: (res: ReservationItem) => void;
-  onDeleteReservation?: (id: string) => void;
-  onUpdateCustomer?: (customer: CustomerRecord) => void;
-  onDeleteCustomer?: (id: string) => void;
-  onToggleCustomerBlock?: (id: string) => void;
-  onUpdateCampaign?: (campaign: CampaignRecord) => void;
-  onDeleteCampaign?: (id: string) => void;
 }
 
 export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
@@ -208,18 +238,27 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   onRefundOrderSeparately,
   tables,
   onChangeTableStatus,
+  onAddTable,
+  onUpdateTable,
+  onDeleteTable,
   stocks,
   stockMovements,
   onRecordStockOperation,
   customers,
   onAddCustomer,
+  onUpdateCustomer,
+  onDeleteCustomer,
   onAdjustLoyaltyPoints,
   campaigns,
   onAddCampaign,
+  onUpdateCampaign,
+  onDeleteCampaign,
   reservations,
   onUpdateReservationStatus,
+  onAddReservation,
+  onUpdateReservation,
+  onDeleteReservation,
   staff,
-  onAddStaff,
   financeLedger,
   onAddFinanceEntry,
   cmsPages,
@@ -232,7 +271,12 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   onTestIntegration,
   onToggleIntegrationMode,
   onUpdateIntegration,
-  onToggleIntegrationActive,
+  onAddIntegration,
+  onDeleteIntegration,
+  archiveHistory = [],
+  onArchiveDaySummary,
+  onDeleteArchiveEntry,
+  onClearArchiveHistory,
   branches,
   onToggleBranchActive,
   onAddBranch,
@@ -256,26 +300,12 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   waiterCalls = [],
   onDispatchWaiterCall,
   onResolveWaiterCall,
+  onDeleteWaiterCall,
+  onClearCompletedWaiterCalls,
   onAssignOrderCourier,
   onUpdateCourierDeliveryState,
   onSettleOrderPayment,
   onIssueOrderReceiptAndInvoice,
-  onDeleteOrder,
-  onDeleteWaiterCall,
-  onAddTable,
-  onUpdateTable,
-  onDeleteTable,
-  onResetTableBill,
-  onAddStockItem,
-  onUpdateStockItem,
-  onDeleteStockItem,
-  onUpdateReservation,
-  onDeleteReservation,
-  onUpdateCustomer,
-  onDeleteCustomer,
-  onToggleCustomerBlock,
-  onUpdateCampaign,
-  onDeleteCampaign,
 }) => {
   const [statusToast, setStatusToast] = useState<string | null>(null);
   const [receiptInvoiceModalOrder, setReceiptInvoiceModalOrder] = useState<OrderRecord | null>(null);
@@ -303,97 +333,24 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   const [selectedFloorArea, setSelectedFloorArea] = useState<string>('Tümü');
   const [selectedMapTableId, setSelectedMapTableId] = useState<string>(tables[0]?.id || 'TBL-01');
 
-  // Module 2: Orders channel filter
-  const [orderChannelFilter, setOrderChannelFilter] = useState<'Tümü' | 'QR' | 'Gel-Al' | 'Paket servis'>('Tümü');
+  // Module 2: Orders multi-criteria filter (Kategori · Garson · Kanal + Hazır Düğmeler)
+  const [orderFilterCriteria, setOrderFilterCriteria] = useState<OrderFilterCriteria>({
+    categoryIds: [],
+    waiterNames: [],
+    channels: [],
+    searchQuery: '',
+  });
 
-  // Module 4, 7, 12 Config States
-  const [mod4RequireQrForOrder, setMod4RequireQrForOrder] = useState(true);
-  const [mod7KitchenAlertMins, setMod7KitchenAlertMins] = useState(14);
-  const [mod12AutoReceiptPrint, setMod12AutoReceiptPrint] = useState(true);
-  const [mod12DefaultPosMethod, setMod12DefaultPosMethod] = useState<'Nakit' | 'Kredi Kartı (POS)' | 'Yemek Kartı'>('Kredi Kartı (POS)');
+  // Module 3: Table CRUD form states
+  const [tableFormOpen, setTableFormOpen] = useState(false);
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+  const [tblNumber, setTblNumber] = useState('');
+  const [tblArea, setTblArea] = useState('Ana Salon');
+  const [tblCapacity, setTblCapacity] = useState(4);
+  const [tblWaiterName, setTblWaiterName] = useState('Murat Demir');
+  const [tblQrCodeNumber, setTblQrCodeNumber] = useState('');
 
-  // Module 31: Advanced Integration & API Settings Modal State
-  const [integrationCategoryFilter, setIntegrationCategoryFilter] = useState<string>('Tümü');
-  const [integrationSearchQuery, setIntegrationSearchQuery] = useState<string>('');
-  const [selectedIntegrationForConfig, setSelectedIntegrationForConfig] = useState<IntegrationPluginItem | null>(null);
-  const [integrationFormConfig, setIntegrationFormConfig] = useState<NonNullable<IntegrationPluginItem['advancedConfig']>>({});
-  const [integrationShowSecret, setIntegrationShowSecret] = useState(false);
-  const [integrationActiveTab, setIntegrationActiveTab] = useState<'api' | 'network' | 'custom' | 'test'>('api');
-  const [integrationPingStatus, setIntegrationPingStatus] = useState<{
-    status: 'idle' | 'testing' | 'success' | 'error';
-    latencyMs?: number;
-    message?: string;
-  }>({ status: 'idle' });
-
-  const handleOpenIntegrationConfig = (intg: IntegrationPluginItem) => {
-    setSelectedIntegrationForConfig(intg);
-    setIntegrationShowSecret(false);
-    setIntegrationActiveTab('api');
-    setIntegrationPingStatus({ status: 'idle' });
-    setIntegrationFormConfig({
-      apiKey: intg.advancedConfig?.apiKey || (intg.settings?.apiKeyMasked as string) || (intg.settings?.restaurantSecretKey as string) || 'live-sec-2026-oztike-token',
-      apiSecret: intg.advancedConfig?.apiSecret || 'sk_live_9921_oztike_ciger_shb_enc',
-      merchantId: intg.advancedConfig?.merchantId || (intg.settings?.merchantId as string) || (intg.settings?.storeId as string) || (intg.settings?.chainCode as string) || `OZT-${intg.code.toUpperCase()}-27`,
-      terminalId: intg.advancedConfig?.terminalId || 'TRM-POS-01',
-      endpointUrl: intg.advancedConfig?.endpointUrl || (intg.settings?.webhookUrl as string) || `https://api.oztikeciger.com.tr/v2/${intg.code}`,
-      ipAddress: intg.advancedConfig?.ipAddress || (intg.settings?.printerIp as string) || '192.168.1.201',
-      port: intg.advancedConfig?.port || (intg.settings?.port as number) || 9100,
-      timeoutMs: intg.advancedConfig?.timeoutMs || 4500,
-      environment: intg.mode === 'Canlı (Live)' ? 'Production' : 'Sandbox',
-      threeDSecure: intg.advancedConfig?.threeDSecure ?? (intg.settings?.threeDSecureRequired !== false),
-      commissionRate: intg.advancedConfig?.commissionRate ?? (intg.settings?.commissionRatePercent as number) ?? 1.89,
-      currency: intg.advancedConfig?.currency || 'TRY',
-      paperWidthMm: intg.advancedConfig?.paperWidthMm || (intg.settings?.paperWidthMm as 58 | 80) || 80,
-      autoCutPaper: intg.advancedConfig?.autoCutPaper ?? (intg.settings?.autoCutPaper !== false),
-      autoPrintReceipt: intg.advancedConfig?.autoPrintReceipt ?? true,
-      kitchenStationRouting: intg.advancedConfig?.kitchenStationRouting || 'Ocakbaşı & Zırh Hattı',
-      autoConfirmOrders: intg.advancedConfig?.autoConfirmOrders ?? (intg.settings?.autoAcceptOrder !== false),
-      defaultPrepMinutes: intg.advancedConfig?.defaultPrepMinutes ?? (intg.settings?.prepTimeMinutes as number) ?? 18,
-      stockSyncEnabled: intg.advancedConfig?.stockSyncEnabled ?? true,
-      eInvoicePrefix: intg.advancedConfig?.eInvoicePrefix || 'ÖZT2026',
-      integratorCompany: intg.advancedConfig?.integratorCompany || (intg.settings?.integrator as string) || 'Uyumsoft / QNB e-Finans',
-      autoIssueOnPayment: intg.advancedConfig?.autoIssueOnPayment ?? true,
-      smsSenderHeader: intg.advancedConfig?.smsSenderHeader || (intg.settings?.senderHeader as string) || 'OZTIKECIGER',
-      templateLanguage: intg.advancedConfig?.templateLanguage || (intg.settings?.templateLanguage as string) || 'tr',
-      webhookUrl: intg.advancedConfig?.webhookUrl || (intg.settings?.webhookUrl as string) || 'https://api.oztikeciger.com.tr/hooks/events',
-      webhookSecret: intg.advancedConfig?.webhookSecret || 'whsec_oztike_hmac_sha256_token',
-      debugLogging: intg.advancedConfig?.debugLogging ?? false,
-      retryAttempts: intg.advancedConfig?.retryAttempts ?? 3,
-      customHeaders: intg.advancedConfig?.customHeaders || '{"X-Restaurant-Branch":"BR-01","X-Source":"POS-Kasa"}',
-      multinetActive: intg.advancedConfig?.multinetActive ?? true,
-      pluxeeActive: intg.advancedConfig?.pluxeeActive ?? true,
-      edenredActive: intg.advancedConfig?.edenredActive ?? true,
-      setcardActive: intg.advancedConfig?.setcardActive ?? true,
-      posTerminalProtocol: intg.advancedConfig?.posTerminalProtocol || 'JSON-RPC',
-    });
-  };
-
-  const handleTestPingIntegration = (intg: IntegrationPluginItem) => {
-    setIntegrationPingStatus({ status: 'testing' });
-    setTimeout(() => {
-      const simulatedLatency = Math.floor(Math.random() * 25) + 18;
-      setIntegrationPingStatus({
-        status: 'success',
-        latencyMs: simulatedLatency,
-        message: `${intg.name} API ve ağ servis bağlantısı doğrulandı! HTTP 200 OK (${simulatedLatency} ms)`,
-      });
-      onTestIntegration(intg.id);
-    }, 500);
-  };
-
-  const handleSaveIntegrationConfig = () => {
-    if (!selectedIntegrationForConfig) return;
-    const updated: IntegrationPluginItem = {
-      ...selectedIntegrationForConfig,
-      mode: integrationFormConfig.environment === 'Production' ? 'Canlı (Live)' : 'Test (Sandbox)',
-      advancedConfig: { ...integrationFormConfig },
-      lastTested: `16 Kas 2026 ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} Doğrulandı`,
-      contractVerified: true,
-    };
-    onUpdateIntegration?.(updated);
-    setStatusToast(`${selectedIntegrationForConfig.name} gelişmiş API ve entegrasyon ayarları başarıyla kaydedildi.`);
-    setSelectedIntegrationForConfig(null);
-  };
+  const pwaHook = usePWAInstall();
 
   // Module 5: Product creation, inline editing & bulk price state + multi-image + Packages
   const [newProdName, setNewProdName] = useState('');
@@ -429,22 +386,105 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   const [stockOpQty, setStockOpQty] = useState(5);
   const [stockOpNote, setStockOpNote] = useState('');
 
-  // Module 17: Customer CRM form
+  // Module 17: Unified Member Management (Üye Yönetimi) CRUD state
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
   const [custEmail, setCustEmail] = useState('');
   const [custDistrict, setCustDistrict] = useState('Şahinbey');
+  const [custAddress, setCustAddress] = useState('');
+  const [custGroup, setCustGroup] = useState<CustomerRecord['group']>('Standart');
+  const [custBirthDate, setCustBirthDate] = useState('1990-01-01');
+  const [custPreferences, setCustPreferences] = useState('Standart servis');
+  const [custPointsInput, setCustPointsInput] = useState<number>(50);
+  const [custWalletInput, setCustWalletInput] = useState<number>(0);
+  const [custKvkkApproved, setCustKvkkApproved] = useState(true);
   const [custMarketingConsent, setCustMarketingConsent] = useState(false);
+  const [custIsBlocked, setCustIsBlocked] = useState(false);
+  const [custSearchQuery, setCustSearchQuery] = useState('');
 
-  // Module 19: Campaign form
+  // Module 11: Reservation Add / Edit / Settings state
+  const [editingResId, setEditingResId] = useState<string | null>(null);
+  const [resFormOpen, setResFormOpen] = useState(false);
+  const [resSettingsOpen, setResSettingsOpen] = useState(false);
+  const [resCustomerName, setResCustomerName] = useState('');
+  const [resCustomerPhone, setResCustomerPhone] = useState('');
+  const [resDate, setResDate] = useState('2026-11-17');
+  const [resTime, setResTime] = useState('19:30');
+  const [resGuestCount, setResGuestCount] = useState(4);
+  const [resTableId, setResTableId] = useState(tables[0]?.id || 'TBL-01');
+  const [resSource, setResSource] = useState<ReservationItem['source']>('online');
+  const [resDepositAmount, setResDepositAmount] = useState(0);
+  const [resSpecialRequests, setResSpecialRequests] = useState('');
+
+  // Module 12: Unified Payment Methods, POS, Cash Register & Receipt sub-tabs
+  const [posModuleTab, setPosModuleTab] = useState<'pos' | 'payment_methods' | 'settlement' | 'receipt'>('pos');
+  const [editingPmId, setEditingPmId] = useState<string | null>(null);
+  const [pmName, setPmName] = useState('');
+  const [pmCode, setPmCode] = useState('');
+  const [pmType, setPmType] = useState<'cash' | 'pos' | 'online_card' | 'meal_card' | 'transfer' | 'wallet'>('online_card');
+  const [pmCommission, setPmCommission] = useState<number>(1.9);
+  const [pmAllowPortal, setPmAllowPortal] = useState(true);
+  const [pmAllowPayNow, setPmAllowPayNow] = useState(true);
+  const [pmDescription, setPmDescription] = useState('');
+
+  // Module 19: Campaign form (Ekle / Düzenle / Sil)
+  const [editingCampId, setEditingCampId] = useState<string | null>(null);
   const [campName, setCampName] = useState('');
   const [campCode, setCampCode] = useState('');
+  const [campType, setCampType] = useState<CampaignRecord['type']>('Yüzde indirim');
   const [campDiscount, setCampDiscount] = useState(15);
+  const [campMinOrder, setCampMinOrder] = useState(400);
+  const [campUsageLimit, setCampUsageLimit] = useState(250);
+  const [campStartDate, setCampStartDate] = useState('2026-11-16');
+  const [campEndDate, setCampEndDate] = useState('2026-12-31');
 
-  // Module 20: Staff form
-  const [staffName, setStaffName] = useState('');
-  const [staffRole, setStaffRole] = useState<StaffRoleName>('Garson');
-  const [staffPhone, setStaffPhone] = useState('');
+  // Module 15: Recipe & Costing CRUD state
+  const [selectedRecipeProductId, setSelectedRecipeProductId] = useState<string>(
+    products[0]?.id || 'PRD-01'
+  );
+  const [recipeStockChoiceId, setRecipeStockChoiceId] = useState<string>(stocks[0]?.id || 'ING-01');
+  const [recipeIngName, setRecipeIngName] = useState<string>(stocks[0]?.name || 'Taze Kuzu Ciğeri');
+  const [recipeIngUnit, setRecipeIngUnit] = useState<'adet' | 'gr' | 'kg' | 'lt' | 'ml' | 'paket'>(
+    stocks[0]?.unit || 'kg'
+  );
+  const [recipeIngQty, setRecipeIngQty] = useState<number>(0.22);
+  const [recipeIngUnitCost, setRecipeIngUnitCost] = useState<number>(stocks[0]?.unitCost || 540);
+  const [editingRecipeIngId, setEditingRecipeIngId] = useState<string | null>(null);
+
+  // Module 31: Per-Plugin Advanced Settings & Dynamic / JSON Config
+  const [pluginCategoryFilter, setPluginCategoryFilter] = useState<string>('Tümü');
+  const [expandedIntgId, setExpandedIntgId] = useState<string | null>(null);
+  const [pluginConfigTab, setPluginConfigTab] = useState<Record<string, 'form' | 'json'>>({});
+  const [pluginJsonDrafts, setPluginJsonDrafts] = useState<Record<string, string>>({});
+  const [pluginJsonFeedback, setPluginJsonFeedback] = useState<
+    Record<string, { ok: boolean; msg: string }>
+  >({});
+  const [newParamTypes, setNewParamTypes] = useState<
+    Record<string, 'string' | 'number' | 'boolean' | 'secret'>
+  >({});
+  const [showNewIntgForm, setShowNewIntgForm] = useState(false);
+  const [newIntgName, setNewIntgName] = useState('');
+  const [newIntgCategory, setNewIntgCategory] = useState<IntegrationPluginItem['category']>('Ödeme');
+  const [newIntgScope, setNewIntgScope] = useState('api.read_write');
+  const [newIntgVersion, setNewIntgVersion] = useState('1.0.0');
+  const [newParamKeys, setNewParamKeys] = useState<Record<string, string>>({});
+  const [newParamVals, setNewParamVals] = useState<Record<string, string>>({});
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
+
+  // Module 40: Archive filter & note
+  const [archiveReason, setArchiveReason] = useState('');
+  const [archiveSearch, setArchiveSearch] = useState('');
+  const [archiveTypeFilter, setArchiveTypeFilter] = useState<'Tümü' | ArchiveHistoryEntry['type']>('Tümü');
+
+  // Module 41: PWA diagnostics, shortcuts & screenshots
+  const [pwaDiagNotice, setPwaDiagNotice] = useState<string | null>(null);
+  const [pwaPushPreviewActive, setPwaPushPreviewActive] = useState<boolean>(true);
+  const [pwaShotInput, setPwaShotInput] = useState('');
+  const [pwaShortcutName, setPwaShortcutName] = useState('');
+  const [pwaShortcutShort, setPwaShortcutShort] = useState('');
+  const [pwaShortcutUrl, setPwaShortcutUrl] = useState('/#menu');
+  const [pwaShortcutDesc, setPwaShortcutDesc] = useState('');
 
   // Module 22-23: Finance form
   const [finType, setFinType] = useState<'Gelir' | 'Gider'>('Gider');
@@ -460,55 +500,6 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
   const [branchAddress, setBranchAddress] = useState('');
   const [branchPhone, setBranchPhone] = useState('');
   const [branchIsMain, setBranchIsMain] = useState(false);
-
-  // Module 3: Table Add/Edit States
-  const [tableModalMode, setTableModalMode] = useState<'create' | 'edit' | null>(null);
-  const [tableFormNumber, setTableFormNumber] = useState('');
-  const [tableFormArea, setTableFormArea] = useState<DiningTableItem['area']>('Ana Salon');
-  const [tableFormCapacity, setTableFormCapacity] = useState(4);
-  const [tableFormWaiter, setTableFormWaiter] = useState('Halil Usta');
-  const [editingTableId, setEditingTableId] = useState<string | null>(null);
-
-  // Module 11: Reservation Edit State
-  const [editingReservation, setEditingReservation] = useState<ReservationItem | null>(null);
-  const [resFormGuests, setResFormGuests] = useState(4);
-  const [resFormDate, setResFormDate] = useState('2026-11-16');
-  const [resFormTime, setResFormTime] = useState('19:30');
-  const [resFormTable, setResFormTable] = useState('Masa 01');
-  const [resFormDeposit, setResFormDeposit] = useState(0);
-  const [resFormSpecial, setResFormSpecial] = useState('');
-
-  // Module 14: Stock Item Add/Edit States
-  const [stockModalMode, setStockModalMode] = useState<'create' | 'edit' | null>(null);
-  const [stockFormName, setStockFormName] = useState('');
-  const [stockFormCategory, setStockFormCategory] = useState<StockItem['category']>('Et ve sakatat');
-  const [stockFormUnit, setStockFormUnit] = useState<StockItem['unit']>('kg');
-  const [stockFormCurrent, setStockFormCurrent] = useState(15);
-  const [stockFormMin, setStockFormMin] = useState(5);
-  const [stockFormCost, setStockFormCost] = useState(620);
-  const [stockFormSupplier, setStockFormSupplier] = useState('Gaziantep Kasaplar Hali');
-  const [stockFormLot, setStockFormLot] = useState('LOT-2026-08');
-  const [stockFormExpiry, setStockFormExpiry] = useState('2026-11-25');
-  const [stockFormWarehouse, setStockFormWarehouse] = useState('Soğuk Hava Deposu');
-  const [editingStockId, setEditingStockId] = useState<string | null>(null);
-
-  // Module 17: Customer Edit States
-  const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
-  const [custEditName, setCustEditName] = useState('');
-  const [custEditPhone, setCustEditPhone] = useState('');
-  const [custEditEmail, setCustEditEmail] = useState('');
-  const [custEditDistrict, setCustEditDistrict] = useState('Şahinbey');
-  const [custEditGroup, setCustEditGroup] = useState<CustomerRecord['group']>('Standart');
-
-  // Module 19: Campaign Edit & Promo Pop-up States
-  const [editingCampaign, setEditingCampaign] = useState<CampaignRecord | null>(null);
-  const [campEditName, setCampEditName] = useState('');
-  const [campEditCode, setCampEditCode] = useState('');
-  const [campEditDiscount, setCampEditDiscount] = useState(15);
-  const [campEditMinOrder, setCampEditMinOrder] = useState(400);
-  const [campEditLimit, setCampEditLimit] = useState(250);
-  const [campEditActive, setCampEditActive] = useState(true);
-  const [showPromoPopupConfig, setShowPromoPopupConfig] = useState(false);
 
   // Module 36: Security RBAC Matrix
   const [rbacRoles, setRbacRoles] = useState<
@@ -892,10 +883,10 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => onSelectModule(13)}
+                onClick={() => onSelectModule(12)}
                 className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-bold cursor-pointer"
               >
-                Kasa &amp; e-Fatura →
+                Kasa &amp; Ödeme →
               </button>
             </div>
           </div>
@@ -916,7 +907,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               { label: '11. Günlük Giderler', val: `${totalExpenses.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`, sub: 'Et tedarik & kömür sarf' },
               { label: '12. Tahmini Kâr (Net)', val: `${estimatedDailyProfit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`, sub: 'Reçete maliyeti düşülmüş' },
               { label: '13. Kritik Stok Uyarıları', val: `${criticalStocks.length} Kalem`, sub: criticalStocks.map((c) => c.name.slice(0, 14)).join(', ') || 'Normal' },
-              { label: '14. Personel Durumu', val: `${staff.filter((s) => s.isActive).length} Aktif`, sub: 'Vardiyada görevli personel' },
+              { label: '14. Kayıtlı Üyeler', val: `${customers.length} Üye`, sub: `${customers.filter((c) => c.group !== 'Standart').length} VIP / Sadık üye` },
               { label: '15. Ödeme Durumu', val: `%94 Doğrulandı`, sub: 'Nakit, POS, iyzico Sandbox' },
               { label: '16. Son İşlemler (Log)', val: `${auditLogs.length} Kayıt`, sub: 'Yetki & denetim izi aktif' },
             ].map((kpi) => (
@@ -955,10 +946,16 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               </button>
               <button
                 type="button"
+                disabled={!siteCmsConfig.operationalSettings?.kitchenModuleEnabled}
                 onClick={() => onSwitchWorkspaceView('kds')}
-                className="px-3.5 py-2 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                title={
+                  siteCmsConfig.operationalSettings?.kitchenModuleEnabled
+                    ? 'Canlı Mutfak KDS ekranına geç'
+                    : 'Mutfak KDS pasif · Genel Ayarlar modülünden aktifleştirebilirsiniz'
+                }
+                className="px-3.5 py-2 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Mutfak Ekranı (KDS)
+                Mutfak Ekranı (KDS){!siteCmsConfig.operationalSettings?.kitchenModuleEnabled ? ' · Pasif' : ''}
               </button>
               <button
                 type="button"
@@ -1083,7 +1080,9 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       {/* =====================================================================
           MODÜL 2: MERKEZİ SİPARİŞLER, PAKET SERVİS & KURYE YÖNETİMİ
       ===================================================================== */}
-      {activeModuleId === 2 && (
+      {activeModuleId === 2 && (() => {
+        const filteredOrders = filterOrdersByMultiCriteria(orders, products, orderFilterCriteria);
+        return (
         <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1091,33 +1090,33 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                 Merkezi Sipariş Yönetimi, Paket Servis & Kurye Takibi
               </h3>
               <p className="text-xs text-neutral-500">
-                QR masa, Gel-Al ve Paket Servis siparişlerini tek merkezden yönetin; kurye atayın, POS tahsilatı ve fiş/e-Fatura işlemlerini yürütün.
+                QR masa, Garson, Gel-Al ve Paket Servis siparişlerini kategori, garson ve kanal bazında çoklu filtreleyin; hazır filtre düğmeleri kaydedin.
               </p>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {(['Tümü', 'QR', 'Gel-Al', 'Paket servis'] as const).map((ch) => (
-                <button
-                  key={ch}
-                  type="button"
-                  onClick={() => setOrderChannelFilter(ch)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-                    orderChannelFilter === ch
-                      ? 'bg-[#B86B35] text-white'
-                      : 'border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-                  }`}
-                >
-                  {ch}
-                </button>
-              ))}
             </div>
           </div>
 
+          <OrderMultiFilterBar
+            categories={categories}
+            orders={orders}
+            tables={tables}
+            staff={staff}
+            criteria={orderFilterCriteria}
+            onChangeCriteria={setOrderFilterCriteria}
+            totalCount={orders.length}
+            filteredCount={filteredOrders.length}
+            testIdPrefix="admin-orders-filter"
+          />
+
           <div className="space-y-3">
-            {orders
-              .filter((o) => (orderChannelFilter === 'Tümü' ? true : o.channel === orderChannelFilter))
-              .map((ord) => (
+            {filteredOrders.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-8 text-center text-xs text-neutral-500">
+                Seçili ürün kategorisi, garson ve sipariş kanalı kriterlerine uyan sipariş bulunamadı.
+              </div>
+            ) : (
+              filteredOrders.map((ord) => (
                 <div
                   key={ord.id}
+                  data-testid={`admin-order-card-${ord.orderNumber}`}
                   className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1128,6 +1127,10 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       <span className="mx-2 text-neutral-400">·</span>
                       <span className="text-xs font-semibold">
                         {ord.channel} ({ord.tableName})
+                      </span>
+                      <span className="mx-2 text-neutral-400">·</span>
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                        Sorumlu: {ord.staffName}
                       </span>
                       <span className="mx-2 text-neutral-400">·</span>
                       <span className="text-xs text-neutral-500">
@@ -1265,22 +1268,32 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       )}
                       <button
                         type="button"
+                        data-testid={`admin-order-print-btn-${ord.orderNumber}`}
                         onClick={() => {
                           onIssueOrderReceiptAndInvoice?.(ord.id);
                           const nums =
                             ord.receiptNumber && ord.eInvoiceNo
                               ? { receiptNumber: ord.receiptNumber, eInvoiceNo: ord.eInvoiceNo }
                               : generateReceiptAndInvoiceNumbers(ord.orderNumber);
-                          setReceiptInvoiceModalOrder({
+                          const enrichedOrder: OrderRecord = {
                             ...ord,
                             receiptNumber: nums.receiptNumber,
                             eInvoiceNo: nums.eInvoiceNo,
                             autoReceiptIssued: true,
+                          };
+                          setReceiptInvoiceModalOrder(enrichedOrder);
+                          printThermalReceipt(enrichedOrder, {
+                            ...siteCmsConfig.receiptSettings,
+                            taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                            logoUrl: siteCmsConfig.header.logoUrl,
                           });
+                          setStatusToast(
+                            `${ord.orderNumber} için Fiş (${nums.receiptNumber}) & e-Fatura (${nums.eInvoiceNo}) hazırlandı ve yazıcıya gönderildi.`
+                          );
                         }}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer"
                       >
-                        <Printer className="w-3.5 h-3.5" /> Fiş / e-Fatura
+                        <Printer className="w-3.5 h-3.5" /> Fiş / Fatura Yazdır
                       </button>
                       <button
                         type="button"
@@ -1314,32 +1327,73 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       >
                         Para İadesi
                       </button>
-                      {onDeleteOrder && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onDeleteOrder(ord.id);
-                            setStatusToast(`${ord.orderNumber} sipariş kaydı silindi (Arşivde saklanıyor).`);
-                          }}
-                          className="px-2.5 py-1 rounded border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 cursor-pointer text-xs"
-                          title="Sipariş kaydını sil"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 inline mr-1" /> Sil
-                        </button>
-                      )}
                     </div>
                   </div>
                 </div>
-              ))}
+              ))
+            )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* =====================================================================
           MODÜL 5: ÜRÜN YÖNETİMİ (SADECE ÜRÜNLER)
       ===================================================================== */}
       {activeModuleId === 5 && (
         <div className="space-y-6">
+          {/* Menü Görünüm & Sipariş Akışı Kuralları (Eski Modül 4'ten taşındı) */}
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-4">
+              <span className="font-bold text-[#B86B35] dark:text-[#D4AF6A]">Menü Sunum Kuralları:</span>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium">
+                <input
+                  type="checkbox"
+                  checked={siteCmsConfig.design.showProductCalories}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      design: { ...prev.design, showProductCalories: e.target.checked },
+                    }))
+                  }
+                />
+                <span>Kalori Bilgisi Göster</span>
+              </label>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium">
+                <input
+                  type="checkbox"
+                  checked={siteCmsConfig.design.showProductPrepTime}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      design: { ...prev.design, showProductPrepTime: e.target.checked },
+                    }))
+                  }
+                />
+                <span>Hazırlık Süresi Göster</span>
+              </label>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium">
+                <input
+                  type="checkbox"
+                  checked={siteCmsConfig.generalSettings.autoAcceptQrOrders}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      generalSettings: { ...prev.generalSettings, autoAcceptQrOrders: e.target.checked },
+                    }))
+                  }
+                />
+                <span>Müşteri Siparişlerini Otomatik Onayla</span>
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSwitchWorkspaceView('qr_web')}
+              className="px-3 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+            >
+              Müşteri Menüsü Önizlemesi →
+            </button>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Add / Edit Product Form */}
             <form
@@ -1907,6 +1961,21 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       ===================================================================== */}
       {activeModuleId === 6 && (
         <div className="space-y-6">
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div>
+              <span className="font-bold text-[#B86B35] dark:text-[#D4AF6A]">Vitrin Kategori &amp; Grid Yerleşimi: </span>
+              <span className="text-neutral-500">
+                Masaüstü {siteCmsConfig.design.gridColumnsDesktop ?? 3} sütun · Mobil {siteCmsConfig.design.gridColumnsMobile ?? 1} sütun olarak gösterilir.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelectModule(34)}
+              className="px-3 py-1.5 rounded-lg border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer"
+            >
+              Tasarım → Kartlar &amp; Grid Ayarları
+            </button>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <form
               onSubmit={(e) => {
@@ -2274,31 +2343,9 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
 
             {/* Stock Inventory Table */}
             <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-base font-semibold">
-                  Güncel Envanter, Lot/Parti, SKT & Tedarikçi Listesi
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStockModalMode('create');
-                    setEditingStockId(null);
-                    setStockFormName('');
-                    setStockFormCategory('Et ve sakatat');
-                    setStockFormUnit('kg');
-                    setStockFormCurrent(10);
-                    setStockFormMin(5);
-                    setStockFormCost(450);
-                    setStockFormSupplier('Gaziantep Kasaplar Hali');
-                    setStockFormLot(`LOT-${Date.now().toString().slice(-4)}`);
-                    setStockFormExpiry('2026-12-31');
-                    setStockFormWarehouse('Soğuk Hava Deposu');
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-[#B86B35] text-white text-xs font-semibold cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5 inline mr-1" /> Yeni Stok Kalemi Ekle
-                </button>
-              </div>
+              <h3 className="text-base font-semibold">
+                Güncel Envanter, Lot/Parti, SKT & Tedarikçi Listesi
+              </h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
@@ -2306,8 +2353,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       <th className="py-2 pr-2">Hammadde / Kategori</th>
                       <th className="py-2 px-2">Tedarikçi & Lot</th>
                       <th className="py-2 px-2 text-right">Mevcut / Kritik</th>
-                      <th className="py-2 px-2 text-right">Birim Maliyet</th>
-                      <th className="py-2 pl-2 text-right">İşlemler</th>
+                      <th className="py-2 pl-2 text-right">Birim Maliyet</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200/60 dark:divide-neutral-800">
@@ -2339,46 +2385,8 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                             </span>{' '}
                             <span className="text-neutral-400">/ {st.minStockThreshold}</span>
                           </td>
-                          <td className="py-2.5 px-2 text-right font-mono tabular-nums font-semibold">
+                          <td className="py-2.5 pl-2 text-right font-mono tabular-nums font-semibold">
                             {st.unitCost.toFixed(2)} ₺
-                          </td>
-                          <td className="py-2.5 pl-2 text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setStockModalMode('edit');
-                                  setEditingStockId(st.id);
-                                  setStockFormName(st.name);
-                                  setStockFormCategory(st.category);
-                                  setStockFormUnit(st.unit);
-                                  setStockFormCurrent(st.currentStock);
-                                  setStockFormMin(st.minStockThreshold);
-                                  setStockFormCost(st.unitCost);
-                                  setStockFormSupplier(st.supplierName);
-                                  setStockFormLot(st.lotNumber);
-                                  setStockFormExpiry(st.expiryDate);
-                                  setStockFormWarehouse(st.warehouse);
-                                }}
-                                className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[#B86B35] dark:text-[#D4AF6A] cursor-pointer"
-                                title="Düzenle"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                              </button>
-                              {onDeleteStockItem && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    onDeleteStockItem(st.id);
-                                    setStatusToast(`${st.name} stok kaydı silindi.`);
-                                  }}
-                                  className="p-1 rounded hover:bg-rose-950/20 text-rose-500 cursor-pointer"
-                                  title="Sil"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
                           </td>
                         </tr>
                       );
@@ -2388,196 +2396,6 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               </div>
             </div>
           </div>
-
-          {/* Stok Kalemi Ekleme / Düzenleme Modalı */}
-          {stockModalMode && (
-            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="w-full max-w-lg rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
-                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
-                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
-                    {stockModalMode === 'create' ? 'Yeni Stok Kalemi Tanımla' : 'Stok Kalemini Düzenle'}
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() => setStockModalMode(null)}
-                    className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <label className="block font-semibold mb-1">Hammadde Adı</label>
-                    <input
-                      type="text"
-                      required
-                      value={stockFormName}
-                      onChange={(e) => setStockFormName(e.target.value)}
-                      placeholder="Örn: Günlük Kuzu Ciğeri"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Kategori</label>
-                    <select
-                      value={stockFormCategory}
-                      onChange={(e) => setStockFormCategory(e.target.value as StockItem['category'])}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    >
-                      <option value="Et ve sakatat">Et ve sakatat</option>
-                      <option value="Sebze">Sebze</option>
-                      <option value="Meyve">Meyve</option>
-                      <option value="Süt ürünleri">Süt ürünleri</option>
-                      <option value="Kuru gıda">Kuru gıda</option>
-                      <option value="Baharat">Baharat</option>
-                      <option value="İçecek">İçecek</option>
-                      <option value="Ambalaj">Ambalaj</option>
-                      <option value="Temizlik malzemeleri">Temizlik malzemeleri</option>
-                      <option value="Diğer sarf malzemeleri">Diğer sarf malzemeleri</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Ölçü Birimi</label>
-                    <select
-                      value={stockFormUnit}
-                      onChange={(e) => setStockFormUnit(e.target.value as StockItem['unit'])}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    >
-                      <option value="kg">kg</option>
-                      <option value="gr">gr</option>
-                      <option value="lt">lt</option>
-                      <option value="ml">ml</option>
-                      <option value="adet">adet</option>
-                      <option value="paket">paket</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Mevcut Stok</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      value={stockFormCurrent}
-                      onChange={(e) => setStockFormCurrent(Number(e.target.value))}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Kritik Eşik</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      value={stockFormMin}
-                      onChange={(e) => setStockFormMin(Number(e.target.value))}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Birim Maliyet (₺)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      value={stockFormCost}
-                      onChange={(e) => setStockFormCost(Number(e.target.value))}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Tedarikçi Firma</label>
-                    <input
-                      type="text"
-                      value={stockFormSupplier}
-                      onChange={(e) => setStockFormSupplier(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Parti / Lot No</label>
-                    <input
-                      type="text"
-                      value={stockFormLot}
-                      onChange={(e) => setStockFormLot(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Son Kullanma Tarihi</label>
-                    <input
-                      type="date"
-                      value={stockFormExpiry}
-                      onChange={(e) => setStockFormExpiry(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block font-semibold mb-1">Depo Lokasyonu</label>
-                    <input
-                      type="text"
-                      value={stockFormWarehouse}
-                      onChange={(e) => setStockFormWarehouse(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                  <button
-                    type="button"
-                    onClick={() => setStockModalMode(null)}
-                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
-                  >
-                    İptal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!stockFormName.trim()) return;
-                      if (stockModalMode === 'create' && onAddStockItem) {
-                        onAddStockItem({
-                          sku: `SKU-${Date.now().toString().slice(-4)}`,
-                          name: stockFormName.trim(),
-                          category: stockFormCategory,
-                          unit: stockFormUnit,
-                          currentStock: stockFormCurrent,
-                          minStockThreshold: stockFormMin,
-                          unitCost: stockFormCost,
-                          supplierId: 'SUP-01',
-                          supplierName: stockFormSupplier,
-                          lotNumber: stockFormLot,
-                          expiryDate: stockFormExpiry,
-                          warehouse: stockFormWarehouse,
-                        });
-                        setStatusToast(`${stockFormName} envantere eklendi.`);
-                      } else if (stockModalMode === 'edit' && onUpdateStockItem && editingStockId) {
-                        const target = stocks.find((s) => s.id === editingStockId);
-                        if (target) {
-                          onUpdateStockItem({
-                            ...target,
-                            name: stockFormName.trim(),
-                            category: stockFormCategory,
-                            unit: stockFormUnit,
-                            currentStock: stockFormCurrent,
-                            minStockThreshold: stockFormMin,
-                            unitCost: stockFormCost,
-                            supplierName: stockFormSupplier,
-                            lotNumber: stockFormLot,
-                            expiryDate: stockFormExpiry,
-                            warehouse: stockFormWarehouse,
-                          });
-                          setStatusToast(`${stockFormName} güncellendi.`);
-                        }
-                      }
-                      setStockModalMode(null);
-                    }}
-                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                  >
-                    Kaydet
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Immutable Stock Movements Ledger */}
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
@@ -2625,200 +2443,734 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       )}
 
       {/* =====================================================================
-          MODÜL 15: ÜRÜN REÇETELERİ & MALİYET ANALİZİ (SADECE REÇETELER)
+          MODÜL 15: ÜRÜN REÇETELERİ & MALİYET ANALİZİ (EKLE / DÜZENLE / SİL)
       ===================================================================== */}
-      {activeModuleId === 15 && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5 text-[#B86B35]" />
-            <div>
-              <h3 className="text-base font-semibold">
-                Ürün Reçete İçerikleri, Fire Oranları &amp; Maliyet Kârlılık Analizi
-              </h3>
-              <p className="text-xs text-neutral-500">
-                Her ürünün hammadde gramajları, fire payı ve brüt kâr marjı otomatik olarak hesaplanır.
-              </p>
+      {activeModuleId === 15 && (() => {
+        const selectedProd =
+          products.find((p) => p.id === selectedRecipeProductId) || products[0] || null;
+        const selectedEffPrice = selectedProd
+          ? selectedProd.discountedPrice ?? selectedProd.price
+          : 0;
+        const selectedMetrics = selectedProd
+          ? calculateRecipeMetrics(
+              selectedProd.recipeLines,
+              selectedProd.wasteAllowancePercent,
+              selectedEffPrice
+            )
+          : null;
+
+        return (
+          <div className="space-y-6 text-xs">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left 5 Cols: Recipe Ingredient Add / Edit / Waste % Form */}
+              <div className="lg:col-span-5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-5 h-5 text-[#B86B35]" />
+                    <div>
+                      <h3 className="text-sm font-bold text-neutral-900 dark:text-[#F5F2EB]">
+                        Reçete &amp; Maliyet Kalemi Ekle / Düzenle / Sil
+                      </h3>
+                      <p className="text-[11px] text-neutral-500">
+                        Ürün seçin, stoktan veya özel hammadde ekleyin, gramaj ve fire oranını yönetin.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1">Reçetesi Düzenlenecek Ürün</label>
+                  <select
+                    data-testid="recipe-product-select"
+                    value={selectedProd?.id || ''}
+                    onChange={(e) => {
+                      setSelectedRecipeProductId(e.target.value);
+                      setEditingRecipeIngId(null);
+                    }}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-semibold"
+                  >
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.code}) · Satış: {(p.discountedPrice ?? p.price).toFixed(2)} ₺
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedProd && selectedMetrics && (
+                  <>
+                    {/* Waste Allowance % & Cost Summary Box */}
+                    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-3.5 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="font-semibold">
+                          Üretim / Pişirme Fire Payı (%):
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            max={60}
+                            step={0.5}
+                            data-testid="recipe-waste-input"
+                            value={selectedProd.wasteAllowancePercent}
+                            onChange={(e) => {
+                              const nextWaste = Math.max(0, Math.min(60, Number(e.target.value)));
+                              onUpdateProduct?.({
+                                ...selectedProd,
+                                wasteAllowancePercent: nextWaste,
+                              });
+                            }}
+                            className="w-20 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1 font-mono text-right font-bold"
+                          />
+                          <span className="font-mono text-neutral-500">%</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800 font-mono">
+                        <div>
+                          <div className="text-[10px] text-neutral-500">Ham Maliyet</div>
+                          <div className="font-bold">
+                            {selectedMetrics.materialCost.toFixed(2)} ₺
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-neutral-500">Fire Dahil Net</div>
+                          <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A]">
+                            {selectedMetrics.totalRecipeCost.toFixed(2)} ₺
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-neutral-500">Brüt Kâr / Marj</div>
+                          <div className="font-bold text-emerald-600 dark:text-emerald-400">
+                            +{selectedMetrics.grossProfit.toFixed(2)} ₺ (%{selectedMetrics.profitMarginPercent})
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Add / Update Ingredient Line Form */}
+                    <form
+                      data-testid="recipe-add-line-form"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!recipeIngName.trim() || recipeIngQty <= 0) return;
+                        const targetIngId =
+                          editingRecipeIngId ||
+                          (recipeStockChoiceId !== 'CUSTOM'
+                            ? recipeStockChoiceId
+                            : `ING-CUST-${Date.now().toString().slice(-4)}`);
+                        const updatedLines = upsertProductRecipeLine(selectedProd.recipeLines, {
+                          ingredientId: targetIngId,
+                          ingredientName: recipeIngName.trim(),
+                          unit: recipeIngUnit,
+                          quantity: Number(recipeIngQty),
+                          unitCost: Number(recipeIngUnitCost),
+                        });
+                        const updatedText = updatedLines
+                          .map((l) => `${l.ingredientName} (${l.quantity} ${l.unit})`)
+                          .join(', ');
+                        onUpdateProduct?.({
+                          ...selectedProd,
+                          recipeLines: updatedLines,
+                          ingredientsText: updatedText || selectedProd.ingredientsText,
+                        });
+                        setEditingRecipeIngId(null);
+                        setStatusToast(
+                          `${selectedProd.name} reçetesine "${recipeIngName.trim()}" kalemi kaydedildi.`
+                        );
+                      }}
+                      className="space-y-3 pt-2 border-t border-neutral-200 dark:border-neutral-800"
+                    >
+                      <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center justify-between">
+                        <span>
+                          {editingRecipeIngId
+                            ? 'Seçili Reçete Kalemini Güncelle'
+                            : 'Yeni Reçete Hammaddesi Ekle'}
+                        </span>
+                        {editingRecipeIngId && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingRecipeIngId(null)}
+                            className="text-[11px] underline text-neutral-500 cursor-pointer"
+                          >
+                            Düzenlemeden Vazgeç
+                          </button>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block font-medium mb-1">Depo Stok Kaleminden Seç (İsteğe Bağlı)</label>
+                        <select
+                          value={recipeStockChoiceId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRecipeStockChoiceId(val);
+                            const st = stocks.find((s) => s.id === val);
+                            if (st) {
+                              setRecipeIngName(st.name);
+                              setRecipeIngUnit(st.unit);
+                              setRecipeIngUnitCost(st.unitCost);
+                            }
+                          }}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        >
+                          {stocks.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ({s.unitCost} ₺ / {s.unit})
+                            </option>
+                          ))}
+                          <option value="CUSTOM">+ Özel Hammadde / Garnitür Girişi</option>
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block font-medium mb-1">Hammadde Adı *</label>
+                          <input
+                            type="text"
+                            required
+                            data-testid="recipe-ing-name-input"
+                            value={recipeIngName}
+                            onChange={(e) => setRecipeIngName(e.target.value)}
+                            placeholder="Örn: Kuzu Ciğeri"
+                            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-medium mb-1">Birim (kg/lt/adet)</label>
+                          <select
+                            value={recipeIngUnit}
+                            onChange={(e) =>
+                              setRecipeIngUnit(
+                                e.target.value as 'adet' | 'gr' | 'kg' | 'lt' | 'ml' | 'paket'
+                              )
+                            }
+                            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                          >
+                            <option value="kg">kg</option>
+                            <option value="gr">gr</option>
+                            <option value="lt">lt</option>
+                            <option value="ml">ml</option>
+                            <option value="adet">adet</option>
+                            <option value="paket">paket</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-medium mb-1">Porsiyon Miktarı *</label>
+                          <input
+                            type="number"
+                            step="0.001"
+                            min="0.001"
+                            required
+                            data-testid="recipe-ing-qty-input"
+                            value={recipeIngQty}
+                            onChange={(e) => setRecipeIngQty(Number(e.target.value))}
+                            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-medium mb-1">Birim Maliyet (₺)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            required
+                            data-testid="recipe-ing-cost-input"
+                            value={recipeIngUnitCost}
+                            onChange={(e) => setRecipeIngUnitCost(Number(e.target.value))}
+                            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        data-testid="recipe-save-line-btn"
+                        className="w-full py-2 px-4 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold cursor-pointer"
+                      >
+                        {editingRecipeIngId
+                          ? 'Reçete Kalemini Güncelle'
+                          : '+ Reçeteye Hammadde Ekle'}
+                      </button>
+                    </form>
+
+                    {/* Active Product Recipe Lines List with Edit & Delete */}
+                    <div className="space-y-2 pt-3 border-t border-neutral-200 dark:border-neutral-800">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold">
+                          {selectedProd.name} Hammadde Kalemleri ({selectedProd.recipeLines.length})
+                        </span>
+                      </div>
+                      {selectedProd.recipeLines.length === 0 ? (
+                        <div className="p-4 rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-neutral-500">
+                          Bu üründe henüz reçete kalemi yok. Yukarıdaki formdan hammadde ekleyin.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {selectedProd.recipeLines.map((rl) => {
+                            const lineTotal = roundCurrency(rl.quantity * rl.unitCost);
+                            return (
+                              <div
+                                key={rl.ingredientId}
+                                data-testid={`recipe-line-row-${rl.ingredientId}`}
+                                className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-neutral-50 dark:bg-[#141413] border border-neutral-200/80 dark:border-neutral-800"
+                              >
+                                <div>
+                                  <div className="font-semibold text-neutral-900 dark:text-[#F5F2EB]">
+                                    {rl.ingredientName}
+                                  </div>
+                                  <div className="text-[11px] font-mono text-neutral-500">
+                                    {rl.quantity} {rl.unit} × {rl.unitCost.toFixed(2)} ₺ ={' '}
+                                    <strong className="text-[#B86B35] dark:text-[#D4AF6A]">
+                                      {lineTotal.toFixed(2)} ₺
+                                    </strong>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    data-testid={`recipe-edit-line-${rl.ingredientId}`}
+                                    onClick={() => {
+                                      setEditingRecipeIngId(rl.ingredientId);
+                                      setRecipeIngName(rl.ingredientName);
+                                      setRecipeIngUnit(rl.unit);
+                                      setRecipeIngQty(rl.quantity);
+                                      setRecipeIngUnitCost(rl.unitCost);
+                                    }}
+                                    className="px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] font-semibold cursor-pointer"
+                                  >
+                                    Düzenle
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-testid={`recipe-delete-line-${rl.ingredientId}`}
+                                    onClick={() => {
+                                      const nextLines = removeProductRecipeLine(
+                                        selectedProd.recipeLines,
+                                        rl.ingredientId
+                                      );
+                                      onUpdateProduct?.({
+                                        ...selectedProd,
+                                        recipeLines: nextLines,
+                                      });
+                                      setStatusToast(
+                                        `"${rl.ingredientName}" kalemi ${selectedProd.name} reçetesinden silindi.`
+                                      );
+                                    }}
+                                    className="p-1.5 rounded text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                                    aria-label={`${rl.ingredientName} sil`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Right 7 Cols: All Products Recipe & Margin Overview Table */}
+              <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-base font-semibold">
+                      Tüm Ürün Reçeteleri, Fire Oranları &amp; Maliyet Kârlılık Tablosu
+                    </h3>
+                    <p className="text-xs text-neutral-500">
+                      Tablodaki herhangi bir ürüne tıklayarak reçete hammaddelerini düzenleyebilir veya silebilirsiniz.
+                    </p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-500">
+                        <th className="py-2 pr-3">Ürün</th>
+                        <th className="py-2 px-3">Reçete Hammaddeleri</th>
+                        <th className="py-2 px-3 text-right">Fire %</th>
+                        <th className="py-2 px-3 text-right">Net Maliyet</th>
+                        <th className="py-2 px-3 text-right">Brüt Kâr / Marj</th>
+                        <th className="py-2 pl-3 text-right">İşlem</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200/60 dark:divide-neutral-800">
+                      {products.map((p) => {
+                        const eff = p.discountedPrice ?? p.price;
+                        const metrics = calculateRecipeMetrics(
+                          p.recipeLines,
+                          p.wasteAllowancePercent,
+                          eff
+                        );
+                        const isSelectedRow = p.id === selectedProd?.id;
+                        return (
+                          <tr
+                            key={p.id}
+                            className={
+                              isSelectedRow ? 'bg-[#B86B35]/10' : 'hover:bg-neutral-50 dark:hover:bg-neutral-900/40'
+                            }
+                          >
+                            <td className="py-2.5 pr-3 font-semibold">{p.name}</td>
+                            <td className="py-2.5 px-3 text-neutral-500">
+                              {p.recipeLines.length > 0
+                                ? p.recipeLines
+                                    .map((rl) => `${rl.ingredientName} (${rl.quantity} ${rl.unit})`)
+                                    .join(', ')
+                                : p.ingredientsText}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono">
+                              %{p.wasteAllowancePercent}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono">
+                              {metrics.totalRecipeCost.toFixed(2)} ₺
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              +{metrics.grossProfit.toFixed(2)} ₺ (%{metrics.profitMarginPercent})
+                            </td>
+                            <td className="py-2.5 pl-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedRecipeProductId(p.id);
+                                  setEditingRecipeIngId(null);
+                                }}
+                                className={`px-2.5 py-1 rounded font-semibold cursor-pointer ${
+                                  isSelectedRow
+                                    ? 'bg-[#B86B35] text-white'
+                                    : 'border border-neutral-300 dark:border-neutral-700'
+                                }`}
+                              >
+                                Reçete Düzenle
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-500">
-                  <th className="py-2 pr-3">Ürün</th>
-                  <th className="py-2 px-3">Reçete Hammaddeleri</th>
-                  <th className="py-2 px-3 text-right">Fire %</th>
-                  <th className="py-2 px-3 text-right">Net Reçete Maliyeti</th>
-                  <th className="py-2 pl-3 text-right">Brüt Kâr / Marj</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200/60 dark:divide-neutral-800">
-                {products.map((p) => {
-                  const eff = p.discountedPrice ?? p.price;
-                  const metrics = calculateRecipeMetrics(
-                    p.recipeLines,
-                    p.wasteAllowancePercent,
-                    eff
-                  );
-                  return (
-                    <tr key={p.id}>
-                      <td className="py-2.5 pr-3 font-semibold">{p.name}</td>
-                      <td className="py-2.5 px-3 text-neutral-500">
-                        {p.recipeLines.length > 0
-                          ? p.recipeLines
-                              .map((rl) => `${rl.ingredientName} (${rl.quantity} ${rl.unit})`)
-                              .join(', ')
-                          : p.ingredientsText}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono">%{p.wasteAllowancePercent}</td>
-                      <td className="py-2.5 px-3 text-right font-mono">
-                        {metrics.totalRecipeCost.toFixed(2)} ₺
-                      </td>
-                      <td className="py-2.5 pl-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                        +{metrics.grossProfit.toFixed(2)} ₺ (%{metrics.profitMarginPercent})
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* =====================================================================
-          MODÜL 17: MÜŞTERİLER (CRM) & SADAKAT PROGRAMI (SADECE CRM)
+          MODÜL 17: ÜYE YÖNETİMİ (CRM, SADAKAT PUANI, CÜZDAN & ÜYE CRUD)
       ===================================================================== */}
       {activeModuleId === 17 && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!custName.trim() || !custPhone.trim()) return;
+          {/* Üye Özet Metrikleri */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+              <div className="text-neutral-500">Toplam Kayıtlı Üye</div>
+              <div className="text-xl font-mono font-bold mt-1">{customers.length}</div>
+            </div>
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+              <div className="text-neutral-500">VIP &amp; Sadık Üye</div>
+              <div className="text-xl font-mono font-bold mt-1 text-[#B86B35] dark:text-[#D4AF6A]">
+                {customers.filter((c) => c.group === 'VIP Misafir' || c.group === 'Sadık Müşteri').length}
+              </div>
+            </div>
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+              <div className="text-neutral-500">Toplam Sadakat Puanı</div>
+              <div className="text-xl font-mono font-bold mt-1 text-emerald-500">
+                {customers.reduce((s, c) => s + c.points, 0).toLocaleString('tr-TR')} P
+              </div>
+            </div>
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+              <div className="text-neutral-500">Toplam Üye Cüzdan Bakiyesi</div>
+              <div className="text-xl font-mono font-bold mt-1">
+                {customers.reduce((s, c) => s + c.walletBalance, 0).toLocaleString('tr-TR')} ₺
+              </div>
+            </div>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!custName.trim() || !custPhone.trim()) return;
+              if (editingCustomerId && onUpdateCustomer) {
+                const existing = customers.find((x) => x.id === editingCustomerId);
+                if (existing) {
+                  onUpdateCustomer({
+                    ...existing,
+                    name: custName.trim(),
+                    phone: custPhone.trim(),
+                    email: custEmail.trim() || existing.email,
+                    district: custDistrict.trim() || 'Şahinbey',
+                    address: custAddress.trim() || `${custDistrict.trim() || 'Şahinbey'} Mah.`,
+                    group: custGroup,
+                    birthDate: custBirthDate || '1990-01-01',
+                    preferences: custPreferences.trim() || 'Standart servis',
+                    points: Math.max(0, Number(custPointsInput) || 0),
+                    walletBalance: Math.max(0, Number(custWalletInput) || 0),
+                    kvkkApproved: custKvkkApproved,
+                    marketingSmsApproved: custMarketingConsent,
+                    isBlocked: custIsBlocked,
+                  });
+                  setStatusToast(`${custName.trim()} üye kaydı güncellendi.`);
+                }
+                setEditingCustomerId(null);
+              } else {
                 onAddCustomer({
                   name: custName.trim(),
                   phone: custPhone.trim(),
-                  email: custEmail.trim() || 'misafir@oztikeciger.com.tr',
-                  address: `${custDistrict} Mah.`,
-                  district: custDistrict,
-                  group: 'Standart',
-                  birthDate: '1990-01-01',
-                  preferences: 'Standart servis',
+                  email: custEmail.trim() || 'uye@oztikeciger.com.tr',
+                  address: custAddress.trim() || `${custDistrict.trim() || 'Şahinbey'} Mah.`,
+                  district: custDistrict.trim() || 'Şahinbey',
+                  group: custGroup,
+                  birthDate: custBirthDate || '1990-01-01',
+                  preferences: custPreferences.trim() || 'Standart servis',
                   referralCode: `OZT-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-                  kvkkApproved: true,
+                  kvkkApproved: custKvkkApproved,
                   marketingSmsApproved: custMarketingConsent,
+                  isBlocked: custIsBlocked,
+                  points: Math.max(0, Number(custPointsInput) || 50),
+                  walletBalance: Math.max(0, Number(custWalletInput) || 0),
                 });
-                setCustName('');
-                setCustPhone('');
-                setCustEmail('');
-                setCustMarketingConsent(false);
-                setStatusToast('Müşteri CRM kaydı oluşturuldu (KVKK ve İleti izinleri ayrık kaydedildi).');
-              }}
-              className="lg:col-span-12 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3 text-xs"
-            >
-              <h3 className="text-base font-semibold">
-                Yeni Müşteri (CRM) & KVKK / İleti İzin Kaydı
+                setStatusToast('Yeni üye kaydı oluşturuldu (sadakat puanı & izinler tanımlandı).');
+              }
+              setCustName('');
+              setCustPhone('');
+              setCustEmail('');
+              setCustAddress('');
+              setCustGroup('Standart');
+              setCustPreferences('Standart servis');
+              setCustPointsInput(50);
+              setCustWalletInput(0);
+              setCustKvkkApproved(true);
+              setCustMarketingConsent(false);
+              setCustIsBlocked(false);
+            }}
+            className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3 text-xs"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#B86B35]" />
+                <span>{editingCustomerId ? 'Üye Bilgilerini Düzenle' : 'Yeni Üye Ekle (CRM, Sadakat & KVKK)'}</span>
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              {editingCustomerId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingCustomerId(null);
+                    setCustName('');
+                    setCustPhone('');
+                    setCustEmail('');
+                    setCustAddress('');
+                    setCustGroup('Standart');
+                    setCustPointsInput(50);
+                    setCustWalletInput(0);
+                    setCustIsBlocked(false);
+                  }}
+                  className="px-3 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                >
+                  Düzenlemeyi İptal Et
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block font-medium mb-1">Ad Soyad *</label>
+                <input
+                  type="text"
+                  required
+                  value={custName}
+                  onChange={(e) => setCustName(e.target.value)}
+                  placeholder="Ad Soyad"
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Telefon *</label>
+                <input
+                  type="tel"
+                  required
+                  value={custPhone}
+                  onChange={(e) => setCustPhone(e.target.value)}
+                  placeholder="05XX XXX XX XX"
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">E-posta</label>
+                <input
+                  type="email"
+                  value={custEmail}
+                  onChange={(e) => setCustEmail(e.target.value)}
+                  placeholder="uye@ornek.com"
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Üye Grubu</label>
+                <select
+                  value={custGroup}
+                  onChange={(e) => setCustGroup(e.target.value as CustomerRecord['group'])}
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                >
+                  <option value="Standart">Standart</option>
+                  <option value="Sadık Müşteri">Sadık Müşteri</option>
+                  <option value="VIP Misafir">VIP Misafir</option>
+                  <option value="Kurumsal">Kurumsal</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Bölge / İlçe</label>
+                <input
+                  type="text"
+                  value={custDistrict}
+                  onChange={(e) => setCustDistrict(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Açık Adres</label>
+                <input
+                  type="text"
+                  value={custAddress}
+                  onChange={(e) => setCustAddress(e.target.value)}
+                  placeholder="Teslimat adresi..."
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block font-medium mb-1">Ad Soyad</label>
+                  <label className="block font-medium mb-1">Sadakat Puanı</label>
                   <input
-                    type="text"
-                    required
-                    value={custName}
-                    onChange={(e) => setCustName(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    type="number"
+                    min={0}
+                    value={custPointsInput}
+                    onChange={(e) => setCustPointsInput(Number(e.target.value))}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-2 font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium mb-1">Telefon</label>
+                  <label className="block font-medium mb-1">Cüzdan (₺)</label>
                   <input
-                    type="tel"
-                    required
-                    value={custPhone}
-                    onChange={(e) => setCustPhone(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium mb-1">E-posta</label>
-                  <input
-                    type="email"
-                    value={custEmail}
-                    onChange={(e) => setCustEmail(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium mb-1">Bölge / İlçe</label>
-                  <input
-                    type="text"
-                    value={custDistrict}
-                    onChange={(e) => setCustDistrict(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    type="number"
+                    min={0}
+                    value={custWalletInput}
+                    onChange={(e) => setCustWalletInput(Number(e.target.value))}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-2 font-mono"
                   />
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <label className="flex items-center gap-2">
+              <div>
+                <label className="block font-medium mb-1">Tercih / Notlar</label>
+                <input
+                  type="text"
+                  value={custPreferences}
+                  onChange={(e) => setCustPreferences(e.target.value)}
+                  placeholder="Örn: Acısız, soğanlı lavaş..."
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={custKvkkApproved}
+                    onChange={(e) => setCustKvkkApproved(e.target.checked)}
+                  />
+                  <span>KVKK Aydınlatma Onaylı</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={custMarketingConsent}
                     onChange={(e) => setCustMarketingConsent(e.target.checked)}
                   />
-                  <span>
-                    Ticari Elektronik İleti (SMS/E-posta) Pazarlama İzni (Varsayılan kapalıdır)
-                  </span>
+                  <span>Ticari İleti (SMS/E-posta) İzni</span>
                 </label>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                >
-                  Müşteriyi Kaydet
-                </button>
+                <label className="flex items-center gap-2 cursor-pointer text-rose-500 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={custIsBlocked}
+                    onChange={(e) => setCustIsBlocked(e.target.checked)}
+                  />
+                  <span>Hesabı Askıya Al / Engelle</span>
+                </label>
               </div>
-            </form>
-          </div>
+              <button
+                type="submit"
+                data-testid="save-member-btn"
+                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+              >
+                {editingCustomerId ? 'Üye Bilgilerini Güncelle' : 'Üyeyi Kaydet'}
+              </button>
+            </div>
+          </form>
 
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
-            <h3 className="text-base font-semibold">
-              Kayıtlı Müşteriler, Sadakat Puanları & İzin Durumları ({customers.length})
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {customers.map((c) => (
-                <div
-                  key={c.id}
-                  className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-2 text-xs"
-                >
-                  <div className="flex justify-between items-center font-semibold">
-                    <span className="flex items-center gap-1.5">
-                      <span>{c.name}</span>
-                      {c.isBlocked && (
-                        <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-500 text-[10px] font-bold">
-                          Engelli
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-base font-semibold">
+                Üye Listesi, Sadakat Puanları &amp; Cüzdanlar ({customers.length})
+              </h3>
+              <div className="relative w-full sm:w-64 text-xs">
+                <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="search"
+                  value={custSearchQuery}
+                  onChange={(e) => setCustSearchQuery(e.target.value)}
+                  placeholder="Üye adı, telefon veya referans ara..."
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] pl-8 pr-3 py-1.5"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {customers
+                .filter(
+                  (c) =>
+                    !custSearchQuery.trim() ||
+                    `${c.name} ${c.phone} ${c.email} ${c.referralCode} ${c.group}`
+                      .toLowerCase()
+                      .includes(custSearchQuery.toLowerCase())
+                )
+                .map((c) => (
+                  <div
+                    key={c.id}
+                    data-testid={`member-card-${c.id}`}
+                    className={`rounded-lg border p-4 space-y-2 text-xs flex flex-col justify-between ${
+                      c.isBlocked
+                        ? 'border-rose-500/40 bg-rose-950/10 opacity-75'
+                        : 'border-neutral-200 dark:border-neutral-800'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center font-semibold gap-2">
+                        <span className="text-sm">{c.name}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A] text-[10px] font-bold">
+                          {c.isBlocked ? 'Askıda' : c.group}
                         </span>
-                      )}
-                    </span>
-                    <span className="text-[#D4AF6A]">{c.group}</span>
-                  </div>
-                  <div className="text-neutral-500">
-                    {c.phone} · {c.district} · Referans: {c.referralCode}
-                  </div>
-                  <div className="font-mono tabular-nums">
-                    Sadakat Puanı: <strong>{c.points} Puan</strong> · Bakiye: {c.walletBalance} ₺
-                  </div>
-                  <div className="text-[11px] text-neutral-500">
-                    KVKK: Onaylı · Pazarlama SMS: {c.marketingSmsApproved ? 'İzinli' : 'İzinsiz (Kapalı)'}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-neutral-100 dark:border-neutral-800">
-                    <div className="flex gap-1.5">
+                      </div>
+                      <div className="text-neutral-500">
+                        {c.phone} · {c.email}
+                      </div>
+                      <div className="text-neutral-500">
+                        {c.district} · Referans: <span className="font-mono">{c.referralCode}</span>
+                      </div>
+                      <div className="font-mono tabular-nums">
+                        Puan: <strong>{c.points} P</strong> · Cüzdan: <strong>{c.walletBalance} ₺</strong> · Sipariş: {c.totalOrders}
+                      </div>
+                      <div className="text-[11px] text-neutral-500">
+                        KVKK: {c.kvkkApproved ? 'Onaylı' : 'Bekliyor'} · SMS: {c.marketingSmsApproved ? 'İzinli' : 'Kapalı'}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-neutral-200 dark:border-neutral-800">
                       <button
                         type="button"
                         onClick={() => {
                           onAdjustLoyaltyPoints(c.id, 100, 'Sadakat ödül puanı kazanımı');
                           setStatusToast(`${c.name} hesabına +100 sadakat puanı eklendi.`);
                         }}
-                        className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 text-[11px]"
+                        className="px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
                       >
                         +100 Puan
                       </button>
@@ -2826,169 +3178,55 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                         type="button"
                         onClick={() => {
                           onAdjustLoyaltyPoints(c.id, -100, 'Siparişte sadakat puanı harcaması');
-                          setStatusToast(`${c.name} hesabından 100 puan harcandı.`);
+                          setStatusToast(`${c.name} hesabından 100 puan düşüldü.`);
                         }}
-                        className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 text-[11px]"
+                        className="px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
                       >
                         -100 Puan
                       </button>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {onToggleCustomerBlock && (
+                      {onUpdateCustomer && (
                         <button
                           type="button"
+                          data-testid={`edit-member-btn-${c.id}`}
                           onClick={() => {
-                            onToggleCustomerBlock(c.id);
-                            setStatusToast(
-                              c.isBlocked ? `${c.name} engeli kaldırıldı.` : `${c.name} engellendi.`
-                            );
+                            setEditingCustomerId(c.id);
+                            setCustName(c.name);
+                            setCustPhone(c.phone);
+                            setCustEmail(c.email);
+                            setCustDistrict(c.district);
+                            setCustAddress(c.address);
+                            setCustGroup(c.group);
+                            setCustBirthDate(c.birthDate || '1990-01-01');
+                            setCustPreferences(c.preferences);
+                            setCustPointsInput(c.points);
+                            setCustWalletInput(c.walletBalance);
+                            setCustKvkkApproved(c.kvkkApproved);
+                            setCustMarketingConsent(c.marketingSmsApproved);
+                            setCustIsBlocked(Boolean(c.isBlocked));
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
                           }}
-                          className={`px-2 py-0.5 rounded text-[11px] font-semibold cursor-pointer border ${
-                            c.isBlocked
-                              ? 'border-emerald-600/50 text-emerald-500 hover:bg-emerald-950/20'
-                              : 'border-amber-600/50 text-amber-500 hover:bg-amber-950/20'
-                          }`}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[#B86B35]/45 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer"
                         >
-                          {c.isBlocked ? 'Engeli Aç' : 'Engelle'}
+                          <Edit3 className="w-3 h-3" /> Düzenle
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingCustomer(c);
-                          setCustEditName(c.name);
-                          setCustEditPhone(c.phone);
-                          setCustEditEmail(c.email);
-                          setCustEditDistrict(c.district);
-                          setCustEditGroup(c.group);
-                        }}
-                        className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[#B86B35] dark:text-[#D4AF6A] cursor-pointer"
-                        title="Düzenle"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
                       {onDeleteCustomer && (
                         <button
                           type="button"
+                          data-testid={`delete-member-btn-${c.id}`}
                           onClick={() => {
                             onDeleteCustomer(c.id);
-                            setStatusToast(`${c.name} müşteri kaydı silindi.`);
+                            setStatusToast(`${c.name} üye kaydı silindi.`);
                           }}
-                          className="p-1 rounded hover:bg-rose-950/20 text-rose-500 cursor-pointer"
-                          title="Sil"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-500/40 text-rose-500 font-semibold cursor-pointer ml-auto"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3 h-3" /> Sil
                         </button>
                       )}
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
-
-            {/* Müşteri Düzenleme Modalı */}
-            {editingCustomer && (
-              <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
-                    <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
-                      Müşteri Kaydını Düzenle: {editingCustomer.name}
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={() => setEditingCustomer(null)}
-                      className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block font-semibold mb-1">Ad Soyad</label>
-                      <input
-                        type="text"
-                        value={custEditName}
-                        onChange={(e) => setCustEditName(e.target.value)}
-                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block font-semibold mb-1">Telefon</label>
-                        <input
-                          type="tel"
-                          value={custEditPhone}
-                          onChange={(e) => setCustEditPhone(e.target.value)}
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">İlçe / Bölge</label>
-                        <input
-                          type="text"
-                          value={custEditDistrict}
-                          onChange={(e) => setCustEditDistrict(e.target.value)}
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block font-semibold mb-1">E-posta</label>
-                      <input
-                        type="email"
-                        value={custEditEmail}
-                        onChange={(e) => setCustEditEmail(e.target.value)}
-                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-semibold mb-1">Müşteri Grubu</label>
-                      <select
-                        value={custEditGroup}
-                        onChange={(e) => setCustEditGroup(e.target.value as CustomerRecord['group'])}
-                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                      >
-                        <option value="Standart">Standart</option>
-                        <option value="VIP Misafir">VIP Misafir</option>
-                        <option value="Kurumsal">Kurumsal</option>
-                        <option value="Sadık Müşteri">Sadık Müşteri</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                    <button
-                      type="button"
-                      onClick={() => setEditingCustomer(null)}
-                      className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
-                    >
-                      İptal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!custEditName.trim()) return;
-                        if (onUpdateCustomer && editingCustomer) {
-                          onUpdateCustomer({
-                            ...editingCustomer,
-                            name: custEditName.trim(),
-                            phone: custEditPhone.trim(),
-                            email: custEditEmail.trim(),
-                            district: custEditDistrict.trim(),
-                            group: custEditGroup,
-                          });
-                          setStatusToast(`${custEditName} bilgileri güncellendi.`);
-                        }
-                        setEditingCustomer(null);
-                      }}
-                      className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                    >
-                      Kaydet
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Müşteri Yorumları ve Şikayetleri Gelen Kutusu */}
@@ -3085,7 +3323,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       )}
 
       {/* =====================================================================
-          MODÜL 19: KAMPANYALAR & KUPON KODLARI (SADECE KAMPANYALAR)
+          MODÜL 19: KAMPANYALAR & KUPON KODLARI (EKLE / DÜZENLE / SİL)
       ===================================================================== */}
       {activeModuleId === 19 && (
         <div className="space-y-6">
@@ -3093,31 +3331,75 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
             onSubmit={(e) => {
               e.preventDefault();
               if (!campName.trim() || !campCode.trim()) return;
-              onAddCampaign({
-                name: campName.trim(),
-                type: 'Yüzde indirim',
-                couponCode: campCode.trim().toUpperCase(),
-                discountValue: campDiscount,
-                minOrderAmount: 400,
-                usageLimit: 250,
-                canCombine: false,
-                startDate: '2026-11-16',
-                endDate: '2026-12-31',
-                isActive: true,
-              });
+              if (editingCampId && onUpdateCampaign) {
+                const existing = campaigns.find((c) => c.id === editingCampId);
+                if (existing) {
+                  onUpdateCampaign({
+                    ...existing,
+                    name: campName.trim(),
+                    type: campType,
+                    couponCode: campCode.trim().toUpperCase(),
+                    discountValue: campDiscount,
+                    minOrderAmount: campMinOrder,
+                    usageLimit: campUsageLimit,
+                    startDate: campStartDate,
+                    endDate: campEndDate,
+                  });
+                  setStatusToast(`${campName.trim()} kampanyası güncellendi.`);
+                }
+                setEditingCampId(null);
+              } else {
+                onAddCampaign({
+                  name: campName.trim(),
+                  type: campType,
+                  couponCode: campCode.trim().toUpperCase(),
+                  discountValue: campDiscount,
+                  minOrderAmount: campMinOrder,
+                  usageLimit: campUsageLimit,
+                  canCombine: false,
+                  startDate: campStartDate,
+                  endDate: campEndDate,
+                  isActive: true,
+                });
+                setStatusToast('Yeni kampanya ve kupon kodu tanımlandı.');
+              }
               setCampName('');
               setCampCode('');
-              setStatusToast('Yeni kampanya ve kupon kodu tanımlandı.');
+              setCampType('Yüzde indirim');
+              setCampDiscount(15);
+              setCampMinOrder(400);
+              setCampUsageLimit(250);
             }}
-            className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3 text-xs"
+            className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs"
           >
-            <h3 className="text-base font-semibold flex items-center gap-2">
-              <Tag className="w-4 h-4 text-[#B86B35]" />
-              <span>Kampanya &amp; Kupon Kodu Oluşturma</span>
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-              <div className="sm:col-span-2">
-                <label className="block font-medium mb-1">Kampanya Adı</label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-base font-semibold flex items-center gap-2">
+                <Tag className="w-4 h-4 text-[#B86B35]" />
+                <span>
+                  {editingCampId ? 'Kampanyayı & Kuponu Düzenle' : 'Kampanya & Kupon Kodu Oluşturma'}
+                </span>
+              </h3>
+              {editingCampId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingCampId(null);
+                    setCampName('');
+                    setCampCode('');
+                    setCampType('Yüzde indirim');
+                    setCampDiscount(15);
+                    setCampMinOrder(400);
+                    setCampUsageLimit(250);
+                  }}
+                  className="px-3 py-1 rounded border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                >
+                  Düzenlemeyi İptal Et
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+              <div className="lg:col-span-2">
+                <label className="block font-medium mb-1">Kampanya Adı *</label>
                 <input
                   type="text"
                   required
@@ -3128,410 +3410,543 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                 />
               </div>
               <div>
-                <label className="block font-medium mb-1">Kupon Kodu</label>
+                <label className="block font-medium mb-1">Kupon Kodu *</label>
                 <input
                   type="text"
                   required
                   value={campCode}
                   onChange={(e) => setCampCode(e.target.value)}
                   placeholder="AILE15"
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono uppercase"
                 />
               </div>
               <div>
-                <label className="block font-medium mb-1">İndirim (%)</label>
+                <label className="block font-medium mb-1">İndirim Tipi</label>
+                <select
+                  value={campType}
+                  onChange={(e) => setCampType(e.target.value as CampaignRecord['type'])}
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                >
+                  <option value="Yüzde indirim">Yüzde indirim (%)</option>
+                  <option value="Sabit tutar indirimi">Sabit tutar indirimi (₺)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium mb-1">
+                  {campType === 'Sabit tutar indirimi' ? 'İndirim Tutarı (₺)' : 'İndirim Oranı (%)'}
+                </label>
                 <input
                   type="number"
-                  min={5}
-                  max={80}
+                  min={1}
+                  max={campType === 'Sabit tutar indirimi' ? 5000 : 90}
                   value={campDiscount}
                   onChange={(e) => setCampDiscount(Number(e.target.value))}
                   className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
                 />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Min. Sepet Tutarı (₺)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={campMinOrder}
+                  onChange={(e) => setCampMinOrder(Number(e.target.value))}
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Kullanım Limiti</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={campUsageLimit}
+                  onChange={(e) => setCampUsageLimit(Number(e.target.value))}
+                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-medium mb-1">Başlangıç</label>
+                  <input
+                    type="date"
+                    value={campStartDate}
+                    onChange={(e) => setCampStartDate(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-2 font-mono text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">Bitiş</label>
+                  <input
+                    type="date"
+                    value={campEndDate}
+                    onChange={(e) => setCampEndDate(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-2 font-mono text-[11px]"
+                  />
+                </div>
               </div>
             </div>
             <button
               type="submit"
               className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
             >
-              Kampanyayı Başlat
+              {editingCampId ? 'Kampanyayı Güncelle' : 'Kampanyayı Başlat'}
             </button>
           </form>
 
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
             <h3 className="text-base font-semibold">
-              Aktif Kampanyalar &amp; Kupon Kodları ({campaigns.length})
+              Aktif &amp; Kayıtlı Kampanyalar ({campaigns.length})
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
               {campaigns.map((camp) => (
                 <div
                   key={camp.id}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-2 bg-neutral-50 dark:bg-[#141413]"
+                  data-testid={`campaign-card-${camp.id}`}
+                  className={`rounded-xl border p-4 space-y-2.5 flex flex-col justify-between ${
+                    camp.isActive
+                      ? 'border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413]'
+                      : 'border-neutral-300/60 dark:border-neutral-800/60 bg-neutral-100/70 dark:bg-[#111110] opacity-80'
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold px-2 py-0.5 rounded bg-[#B86B35] text-white">
-                      {camp.couponCode}
-                    </span>
-                    <span className="font-bold text-emerald-500">
-                      %{camp.discountValue} İndirim
-                    </span>
-                  </div>
-                  <div className="font-semibold text-sm">{camp.name}</div>
-                  <div className="text-neutral-500">
-                    Min. Sepet: {camp.minOrderAmount} ₺ · Kullanım: {camp.usedCount}/{camp.usageLimit}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                    <div className="text-[11px] text-neutral-500">
-                      {camp.startDate} – {camp.endDate} · {camp.isActive ? 'Yayında' : 'Pasif'}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-bold px-2 py-0.5 rounded bg-[#B86B35] text-white">
+                        {camp.couponCode}
+                      </span>
+                      <span className="font-bold text-emerald-500">
+                        {camp.type === 'Sabit tutar indirimi'
+                          ? `${camp.discountValue} ₺ İndirim`
+                          : `%${camp.discountValue} İndirim`}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingCampaign(camp);
-                          setCampEditName(camp.name);
-                          setCampEditCode(camp.couponCode);
-                          setCampEditDiscount(camp.discountValue);
-                          setCampEditMinOrder(camp.minOrderAmount);
-                          setCampEditLimit(camp.usageLimit);
-                          setCampEditActive(camp.isActive);
-                        }}
-                        className="px-2 py-0.5 rounded border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] hover:bg-[#B86B35]/10 text-[11px] font-semibold cursor-pointer"
-                      >
-                        <Edit3 className="w-3 h-3 inline mr-0.5" /> Düzenle
-                      </button>
-                      {onDeleteCampaign && (
+                    <div className="font-semibold text-sm">{camp.name}</div>
+                    <div className="text-neutral-500">
+                      Min. Sepet: {camp.minOrderAmount} ₺ · Kullanım: {camp.usedCount}/{camp.usageLimit}
+                    </div>
+                    <div className="text-[11px] text-neutral-500">
+                      {camp.startDate} – {camp.endDate} ·{' '}
+                      <span className={camp.isActive ? 'text-emerald-500 font-bold' : 'text-amber-500 font-bold'}>
+                        {camp.isActive ? 'Yayında' : 'Pasif'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-neutral-200 dark:border-neutral-800">
+                    {onUpdateCampaign && (
+                      <>
                         <button
                           type="button"
                           onClick={() => {
-                            onDeleteCampaign(camp.id);
-                            setStatusToast(`${camp.name} kampanyası silindi.`);
+                            onUpdateCampaign({ ...camp, isActive: !camp.isActive });
+                            setStatusToast(
+                              `${camp.name} ${camp.isActive ? 'pasife alındı' : 'yayına alındı'}.`
+                            );
                           }}
-                          className="px-2 py-0.5 rounded border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 text-[11px] cursor-pointer"
+                          className={`px-2.5 py-1 rounded font-semibold cursor-pointer ${
+                            camp.isActive
+                              ? 'bg-emerald-600/15 text-emerald-500 border border-emerald-500/35'
+                              : 'bg-amber-600/15 text-amber-500 border border-amber-500/35'
+                          }`}
                         >
-                          <Trash2 className="w-3 h-3 inline mr-0.5" /> Sil
+                          {camp.isActive ? 'Yayında' : 'Aktifleştir'}
                         </button>
-                      )}
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCampId(camp.id);
+                            setCampName(camp.name);
+                            setCampCode(camp.couponCode);
+                            setCampType(camp.type);
+                            setCampDiscount(camp.discountValue);
+                            setCampMinOrder(camp.minOrderAmount);
+                            setCampUsageLimit(camp.usageLimit);
+                            setCampStartDate(camp.startDate);
+                            setCampEndDate(camp.endDate);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#B86B35]/45 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" /> Düzenle
+                        </button>
+                      </>
+                    )}
+                    {onDeleteCampaign && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteCampaign(camp.id);
+                          setStatusToast(`${camp.name} kampanyası silindi.`);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-rose-500/40 text-rose-500 font-semibold cursor-pointer ml-auto"
+                      >
+                        <Trash2 className="w-3 h-3" /> Sil
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
-            </div>
-
-            {/* Kampanya Düzenleme Modalı */}
-            {editingCampaign && (
-              <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
-                    <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
-                      Kampanyayı Düzenle: {editingCampaign.name}
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={() => setEditingCampaign(null)}
-                      className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block font-semibold mb-1">Kampanya Adı</label>
-                      <input
-                        type="text"
-                        value={campEditName}
-                        onChange={(e) => setCampEditName(e.target.value)}
-                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block font-semibold mb-1">Kupon Kodu</label>
-                        <input
-                          type="text"
-                          value={campEditCode}
-                          onChange={(e) => setCampEditCode(e.target.value)}
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">İndirim (%)</label>
-                        <input
-                          type="number"
-                          value={campEditDiscount}
-                          onChange={(e) => setCampEditDiscount(Number(e.target.value))}
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">Min. Sepet (₺)</label>
-                        <input
-                          type="number"
-                          value={campEditMinOrder}
-                          onChange={(e) => setCampEditMinOrder(Number(e.target.value))}
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">Kullanım Limiti</label>
-                        <input
-                          type="number"
-                          value={campEditLimit}
-                          onChange={(e) => setCampEditLimit(Number(e.target.value))}
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                        />
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-2 pt-1 font-semibold cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={campEditActive}
-                        onChange={(e) => setCampEditActive(e.target.checked)}
-                      />
-                      <span>Kampanya Yayında (Aktif)</span>
-                    </label>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                    <button
-                      type="button"
-                      onClick={() => setEditingCampaign(null)}
-                      className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
-                    >
-                      İptal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!campEditName.trim()) return;
-                        if (onUpdateCampaign && editingCampaign) {
-                          onUpdateCampaign({
-                            ...editingCampaign,
-                            name: campEditName.trim(),
-                            couponCode: campEditCode.trim().toUpperCase(),
-                            discountValue: campEditDiscount,
-                            minOrderAmount: campEditMinOrder,
-                            usageLimit: campEditLimit,
-                            isActive: campEditActive,
-                          });
-                          setStatusToast(`${campEditName} kampanyası güncellendi.`);
-                        }
-                        setEditingCampaign(null);
-                      }}
-                      className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                    >
-                      Kaydet
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Popup Açılan Duyuru / Kampanya Banner Yönetimi */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-[#B86B35]" />
-                <div>
-                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
-                    Açılır Pop-up Duyuru &amp; Kampanya Bannerı (Modal Popup)
-                  </h4>
-                  <p className="text-neutral-500">
-                    Müşteri vitrin sitesine girdiğinde otomatik açılan görsel ve kuponlu kampanya penceresini yönetin.
-                  </p>
-                </div>
-              </div>
-              <label className="inline-flex items-center gap-2 font-bold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.promoPopup.enabled}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, enabled: e.target.checked },
-                    }))
-                  }
-                />
-                <span className={siteCmsConfig.promoPopup.enabled ? 'text-emerald-500' : 'text-neutral-500'}>
-                  {siteCmsConfig.promoPopup.enabled ? 'Pop-up Açık (Aktif)' : 'Pop-up Kapalı'}
-                </span>
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <label className="block font-semibold mb-1">Pop-up Başlığı (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.promoPopup.titleTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, titleTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Rozet Metni</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.promoPopup.badgeText}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, badgeText: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Kupon Kodu</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.promoPopup.couponCode}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, couponCode: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Açılma Gecikmesi (Saniye)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={60}
-                  value={siteCmsConfig.promoPopup.delaySeconds}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, delaySeconds: Number(e.target.value) },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block font-semibold mb-1">Kampanya Açıklaması (TR)</label>
-                <input
-                  type="text"
-                  value={siteCmsConfig.promoPopup.bodyTr}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, bodyTr: e.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block font-semibold mb-1">Pop-up Görseli</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={siteCmsConfig.promoPopup.imageUrl}
-                    onChange={(e) =>
-                      onUpdateSiteCmsConfig((prev) => ({
-                        ...prev,
-                        promoPopup: { ...prev.promoPopup, imageUrl: e.target.value },
-                      }))
-                    }
-                    className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono text-[11px]"
-                  />
-                  <label className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 font-semibold cursor-pointer">
-                    <Upload className="w-3.5 h-3.5 inline mr-1" /> Yükle
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = () => {
-                            if (reader.result) {
-                              onUpdateSiteCmsConfig((prev) => ({
-                                ...prev,
-                                promoPopup: { ...prev.promoPopup, imageUrl: String(reader.result) },
-                              }));
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={siteCmsConfig.promoPopup.showOncePerSession}
-                  onChange={(e) =>
-                    onUpdateSiteCmsConfig((prev) => ({
-                      ...prev,
-                      promoPopup: { ...prev.promoPopup, showOncePerSession: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Tarayıcı oturumu başına yalnızca 1 kez göster (Kapatılınca tekrar açılmaz)</span>
-              </label>
-
-              <button
-                type="button"
-                onClick={() => setStatusToast('Pop-up kampanya ayarları kaydedildi ve yayına alındı.')}
-                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-              >
-                Pop-up Ayarlarını Kaydet
-              </button>
             </div>
           </div>
         </div>
       )}
 
       {/* =====================================================================
-          MODÜL 11: REZERVASYON YÖNETİMİ (BÖLÜM 11)
+          MODÜL 11: REZERVASYON YÖNETİMİ (EKLE / DÜZENLE / SİL & AYARLAR)
       ===================================================================== */}
       {activeModuleId === 11 && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-[#B86B35]" />
-            <h3 className="text-base font-semibold">
-              Rezervasyon, Kapora Takibi & Gelmedi (No-Show) Yönetimi
-            </h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {reservations.map((res) => (
-              <div
-                key={res.id}
-                className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-2.5 text-xs"
+        <div className="space-y-6 text-xs">
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-[#B86B35]" />
+                <div>
+                  <h3 className="text-base font-semibold">
+                    Rezervasyon Yönetimi, Kapora &amp; Kapasite Ayarları ({reservations.length})
+                  </h3>
+                  <p className="text-neutral-500">
+                    Yeni rezervasyon ekleyin, mevcut rezervasyonları düzenleyin veya silin; çalışma saatleri ve kapora kurallarını yapılandırın.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setResSettingsOpen((p) => !p)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                >
+                  <Settings className="w-3.5 h-3.5" /> Rezervasyon Ayarları
+                </button>
+                {onAddReservation && (
+                  <button
+                    type="button"
+                    data-testid="new-reservation-btn"
+                    onClick={() => {
+                      setEditingResId(null);
+                      setResCustomerName('');
+                      setResCustomerPhone('');
+                      setResDate('2026-11-17');
+                      setResTime('19:30');
+                      setResGuestCount(4);
+                      setResTableId(tables[0]?.id || 'TBL-01');
+                      setResSource('online');
+                      setResDepositAmount(
+                        siteCmsConfig.reservationSettings?.depositRequired
+                          ? siteCmsConfig.reservationSettings.defaultDepositAmount
+                          : 0
+                      );
+                      setResSpecialRequests('');
+                      setResFormOpen((p) => !p);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Yeni Rezervasyon Ekle
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {resSettingsOpen && (() => {
+              const rsSet = siteCmsConfig.reservationSettings || {
+                slotDurationMinutes: 90,
+                minPartySize: 1,
+                maxPartySize: 24,
+                depositRequired: false,
+                defaultDepositAmount: 250,
+                autoConfirm: false,
+                workingStartHour: '11:00',
+                workingEndHour: '23:30',
+                advanceBookingDays: 30,
+                allowCustomerNotes: true,
+              };
+              const updateResCfg = (patch: Partial<NonNullable<SiteCmsConfig['reservationSettings']>>) =>
+                onUpdateSiteCmsConfig((prev) => ({
+                  ...prev,
+                  reservationSettings: { ...rsSet, ...patch },
+                }));
+              return (
+                <div className="rounded-xl border border-[#B86B35]/35 bg-neutral-50 dark:bg-[#141413] p-4 space-y-3">
+                  <div className="font-bold text-sm text-[#B86B35] dark:text-[#D4AF6A]">
+                    Rezervasyon Kuralları &amp; Kapora Politikası
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div>
+                      <label className="block font-semibold mb-1">Masa Süresi (dk)</label>
+                      <input
+                        type="number"
+                        min={30}
+                        value={rsSet.slotDurationMinutes}
+                        onChange={(e) => updateResCfg({ slotDurationMinutes: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Min Kişi</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={rsSet.minPartySize}
+                        onChange={(e) => updateResCfg({ minPartySize: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Maks Kişi</label>
+                      <input
+                        type="number"
+                        min={2}
+                        value={rsSet.maxPartySize}
+                        onChange={(e) => updateResCfg({ maxPartySize: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Açılış Saati</label>
+                      <input
+                        type="time"
+                        value={rsSet.workingStartHour}
+                        onChange={(e) => updateResCfg({ workingStartHour: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Son Rez. Saati</label>
+                      <input
+                        type="time"
+                        value={rsSet.workingEndHour}
+                        onChange={(e) => updateResCfg({ workingEndHour: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Varsayılan Kapora (₺)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={rsSet.defaultDepositAmount}
+                        onChange={(e) => updateResCfg({ defaultDepositAmount: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2.5 py-1.5 font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-4 pt-1">
+                    <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                      <input
+                        type="checkbox"
+                        checked={rsSet.depositRequired}
+                        onChange={(e) => updateResCfg({ depositRequired: e.target.checked })}
+                      />
+                      <span>Kapora Zorunlu</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                      <input
+                        type="checkbox"
+                        checked={rsSet.autoConfirm}
+                        onChange={(e) => updateResCfg({ autoConfirm: e.target.checked })}
+                      />
+                      <span>Web Rezervasyonlarını Otomatik Onayla</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                      <input
+                        type="checkbox"
+                        checked={rsSet.allowCustomerNotes}
+                        onChange={(e) => updateResCfg({ allowCustomerNotes: e.target.checked })}
+                      />
+                      <span>Özel İstek / Not Alanı Aktif</span>
+                    </label>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {resFormOpen && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!resCustomerName.trim() || !resCustomerPhone.trim()) return;
+                  const chosenTable = tables.find((t) => t.id === resTableId) || tables[0];
+                  if (editingResId && onUpdateReservation) {
+                    const existing = reservations.find((r) => r.id === editingResId);
+                    if (existing) {
+                      onUpdateReservation({
+                        ...existing,
+                        customerName: resCustomerName.trim(),
+                        customerPhone: resCustomerPhone.trim(),
+                        date: resDate,
+                        time: resTime,
+                        guestCount: Math.max(1, resGuestCount),
+                        tableId: chosenTable?.id || existing.tableId,
+                        tableNumber: chosenTable?.number || existing.tableNumber,
+                        source: resSource,
+                        depositAmount: Math.max(0, resDepositAmount),
+                        depositPaid: existing.depositPaid || resDepositAmount > 0,
+                        specialRequests: resSpecialRequests.trim(),
+                      });
+                      setStatusToast(`${resCustomerName.trim()} rezervasyonu güncellendi.`);
+                    }
+                    setEditingResId(null);
+                    setResFormOpen(false);
+                  } else if (onAddReservation) {
+                    const out = onAddReservation({
+                      customerName: resCustomerName.trim(),
+                      customerPhone: resCustomerPhone.trim(),
+                      date: resDate,
+                      time: resTime,
+                      guestCount: Math.max(1, resGuestCount),
+                      tableId: chosenTable?.id || 'TBL-01',
+                      tableNumber: chosenTable?.number || 'Salon 1',
+                      source: resSource,
+                      depositAmount: Math.max(0, resDepositAmount),
+                      depositPaid: resDepositAmount > 0,
+                      specialRequests: resSpecialRequests.trim(),
+                    });
+                    setStatusToast(out.message);
+                    if (out.success) setResFormOpen(false);
+                  }
+                }}
+                className="rounded-xl border-2 border-[#B86B35]/40 bg-neutral-50 dark:bg-[#141413] p-4 space-y-3"
               >
-                <div className="flex justify-between font-semibold text-sm">
-                  <span>
-                    {res.customerName} ({res.guestCount} Kişi)
-                  </span>
-                  <span className="font-mono text-[#B86B35] dark:text-[#D4AF6A]">
-                    {res.date} · {res.time}
-                  </span>
+                <div className="font-bold text-sm">
+                  {editingResId ? 'Rezervasyonu Düzenle' : 'Yeni Rezervasyon Kaydı Oluştur'}
                 </div>
-                <div className="text-neutral-500">
-                  Masa: {res.tableNumber} · Tel: {res.customerPhone} · Kaynak: {res.source}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Misafir Ad Soyad *</label>
+                    <input
+                      type="text"
+                      required
+                      value={resCustomerName}
+                      onChange={(e) => setResCustomerName(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Telefon *</label>
+                    <input
+                      type="tel"
+                      required
+                      value={resCustomerPhone}
+                      onChange={(e) => setResCustomerPhone(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Tarih</label>
+                    <input
+                      type="date"
+                      value={resDate}
+                      onChange={(e) => setResDate(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Saat</label>
+                    <input
+                      type="time"
+                      value={resTime}
+                      onChange={(e) => setResTime(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kişi Sayısı</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={resGuestCount}
+                      onChange={(e) => setResGuestCount(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Masa Seçimi</label>
+                    <select
+                      value={resTableId}
+                      onChange={(e) => setResTableId(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                    >
+                      {tables.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.number} ({t.capacity} Kişilik · {t.area})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Rezervasyon Kaynağı</label>
+                    <select
+                      value={resSource}
+                      onChange={(e) => setResSource(e.target.value as ReservationItem['source'])}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                    >
+                      <option value="online">Web Sitesi / Online</option>
+                      <option value="phone">Telefon</option>
+                      <option value="walk_in">Kapıdan (Walk-In)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kapora Tutarı (₺)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={resDepositAmount}
+                      onChange={(e) => setResDepositAmount(Number(e.target.value))}
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <label className="block font-semibold mb-1">Özel İstek / Not</label>
+                    <input
+                      type="text"
+                      value={resSpecialRequests}
+                      onChange={(e) => setResSpecialRequests(e.target.value)}
+                      placeholder="Örn: Bebek sandalyesi, köşe masa, doğum günü pastası..."
+                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                    />
+                  </div>
                 </div>
-                <div className="text-neutral-500">
-                  Özel İstek: {res.specialRequests || 'Belirtilmedi'} · Kapora: {res.depositAmount} ₺
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResFormOpen(false);
+                      setEditingResId(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                  >
+                    Vazgeç
+                  </button>
+                  <button
+                    type="submit"
+                    data-testid="save-reservation-btn"
+                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                  >
+                    {editingResId ? 'Rezervasyonu Güncelle' : 'Rezervasyonu Kaydet'}
+                  </button>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
-                  <div className="flex flex-wrap gap-1.5">
+              </form>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {reservations.map((res) => (
+                <div
+                  key={res.id}
+                  data-testid={`reservation-card-${res.id}`}
+                  className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-2.5 text-xs"
+                >
+                  <div className="flex justify-between font-semibold text-sm">
+                    <span>
+                      {res.customerName} ({res.guestCount} Kişi)
+                    </span>
+                    <span className="font-mono text-[#B86B35] dark:text-[#D4AF6A]">
+                      {res.date} · {res.time}
+                    </span>
+                  </div>
+                  <div className="text-neutral-500">
+                    Masa: {res.tableNumber} · Tel: {res.customerPhone} · Kaynak: {res.source}
+                  </div>
+                  <div className="text-neutral-500">
+                    Özel İstek: {res.specialRequests || 'Belirtilmedi'} · Kapora: {res.depositAmount} ₺
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
                     {(
                       [
                         { st: 'confirmed', label: 'Onayla' },
@@ -3547,7 +3962,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                           onUpdateReservationStatus(res.id, btn.st);
                           setStatusToast(`Rezervasyon durumu "${btn.label}" olarak güncellendi.`);
                         }}
-                        className={`px-2 py-0.5 rounded text-[11px] border ${
+                        className={`px-2 py-1 rounded border cursor-pointer ${
                           res.status === btn.st
                             ? 'bg-[#B86B35] text-white border-[#B86B35]'
                             : 'border-neutral-300 dark:border-neutral-700'
@@ -3556,171 +3971,80 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                         {btn.label}
                       </button>
                     ))}
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingReservation(res);
-                        setResFormGuests(res.guestCount);
-                        setResFormDate(res.date);
-                        setResFormTime(res.time);
-                        setResFormTable(res.tableNumber);
-                        setResFormDeposit(res.depositAmount);
-                        setResFormSpecial(res.specialRequests || '');
-                      }}
-                      className="px-2 py-0.5 rounded border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] hover:bg-[#B86B35]/10 cursor-pointer text-[11px] font-semibold"
-                    >
-                      <Edit3 className="w-3 h-3 inline mr-0.5" /> Düzenle
-                    </button>
+                    {onUpdateReservation && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingResId(res.id);
+                          setResCustomerName(res.customerName);
+                          setResCustomerPhone(res.customerPhone);
+                          setResDate(res.date);
+                          setResTime(res.time);
+                          setResGuestCount(res.guestCount);
+                          setResTableId(res.tableId);
+                          setResSource(res.source);
+                          setResDepositAmount(res.depositAmount);
+                          setResSpecialRequests(res.specialRequests || '');
+                          setResFormOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[#B86B35]/45 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer ml-auto"
+                      >
+                        <Edit3 className="w-3 h-3" /> Düzenle
+                      </button>
+                    )}
                     {onDeleteReservation && (
                       <button
                         type="button"
+                        data-testid={`delete-reservation-btn-${res.id}`}
                         onClick={() => {
                           onDeleteReservation(res.id);
                           setStatusToast(`${res.customerName} rezervasyonu silindi.`);
                         }}
-                        className="px-2 py-0.5 rounded border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 cursor-pointer text-[11px]"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-500/40 text-rose-500 font-semibold cursor-pointer"
                       >
-                        <Trash2 className="w-3 h-3 inline mr-0.5" /> Sil
+                        <Trash2 className="w-3 h-3" /> Sil
                       </button>
                     )}
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Rezervasyon Düzenleme Modalı */}
-          {editingReservation && (
-            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
-                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
-                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
-                    Rezervasyonu Düzenle: {editingReservation.customerName}
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() => setEditingReservation(null)}
-                    className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold mb-1">Tarih</label>
-                    <input
-                      type="date"
-                      value={resFormDate}
-                      onChange={(e) => setResFormDate(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Saat</label>
-                    <input
-                      type="time"
-                      value={resFormTime}
-                      onChange={(e) => setResFormTime(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Kişi Sayısı</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      value={resFormGuests}
-                      onChange={(e) => setResFormGuests(Number(e.target.value))}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Masa No</label>
-                    <input
-                      type="text"
-                      value={resFormTable}
-                      onChange={(e) => setResFormTable(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block font-semibold mb-1">Kapora Tutarı (₺)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={resFormDeposit}
-                      onChange={(e) => setResFormDeposit(Number(e.target.value))}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block font-semibold mb-1">Özel İstek / Not</label>
-                    <input
-                      type="text"
-                      value={resFormSpecial}
-                      onChange={(e) => setResFormSpecial(e.target.value)}
-                      placeholder="Örn: Bebek sandalyesi, ocakbaşı önü masa"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                  <button
-                    type="button"
-                    onClick={() => setEditingReservation(null)}
-                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
-                  >
-                    İptal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onUpdateReservation && editingReservation) {
-                        onUpdateReservation({
-                          ...editingReservation,
-                          guestCount: resFormGuests,
-                          date: resFormDate,
-                          time: resFormTime,
-                          tableNumber: resFormTable,
-                          depositAmount: resFormDeposit,
-                          specialRequests: resFormSpecial,
-                        });
-                        setStatusToast(`${editingReservation.customerName} rezervasyonu güncellendi.`);
-                      }
-                      setEditingReservation(null);
-                    }}
-                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                  >
-                    Kaydet
-                  </button>
-                </div>
-              </div>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       )}
 
       {/* =====================================================================
-          MODÜL 8: CANLI GARSON ÇAĞRILARI & MASA SERVİSİ (SADECE GARSON ÇAĞRILARI)
+          MODÜL 8: CANLI GARSON ÇAĞRILARI & MASA SERVİSİ (SİLİNEBİLİR)
       ===================================================================== */}
       {activeModuleId === 8 && (
         <div className="rounded-xl border border-amber-500/35 bg-white dark:bg-[#1F1F1D] p-5 space-y-3 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-base font-semibold flex items-center gap-2">
               <BellRing className="w-4 h-4 text-amber-500" />
-              <span>Canlı QR Garson Çağrıları Kuyruğu ({activeWaiterCallsList.length} Bekleyen)</span>
+              <span>Canlı Garson Çağrıları Kuyruğu ({activeWaiterCallsList.length} Bekleyen)</span>
             </h3>
-            <button
-              type="button"
-              onClick={() => onSwitchWorkspaceView('waiter')}
-              className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
-            >
-              Tam Ekran Garson Terminali →
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {onClearCompletedWaiterCalls && waiterCalls.some((c) => c.status === 'Tamamlandı') && (
+                <button
+                  type="button"
+                  data-testid="clear-completed-waiter-calls-btn"
+                  onClick={() => {
+                    onClearCompletedWaiterCalls();
+                    setStatusToast('Tamamlanan garson çağrıları temizlendi.');
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-rose-500/40 text-rose-500 font-semibold cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Tamamlananları Temizle
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onSwitchWorkspaceView('waiter')}
+                className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+              >
+                Tam Ekran Garson Terminali →
+              </button>
+            </div>
           </div>
           {waiterCalls.length === 0 ? (
             <div className="text-neutral-500 py-3">Henüz masa servis çağrısı bulunmuyor.</div>
@@ -3729,9 +4053,10 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               {waiterCalls.map((call) => (
                 <div
                   key={call.id}
+                  data-testid={`waiter-call-card-${call.id}`}
                   className={`rounded-xl border p-3.5 space-y-2 ${
                     call.status === 'Tamamlandı'
-                      ? 'border-neutral-200 dark:border-neutral-800 opacity-65'
+                      ? 'border-neutral-200 dark:border-neutral-800 opacity-75'
                       : 'border-amber-500/50 bg-amber-950/10'
                   }`}
                 >
@@ -3751,132 +4076,49 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       Not: {call.customNote}
                     </div>
                   )}
-                  {call.status !== 'Tamamlandı' ? (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onDispatchWaiterCall?.(call.id);
-                          setStatusToast(`${call.tableNumber} çağrısına garson yönlendirildi.`);
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                      >
-                        Garson Yönlendir
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onResolveWaiterCall?.(call.id, call.tableId);
-                          setStatusToast(`${call.tableNumber} servis çağrısı tamamlandı.`);
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white font-semibold cursor-pointer"
-                      >
-                        Servisi Tamamla
-                      </button>
-                    </div>
-                  ) : (
-                    onDeleteWaiterCall && (
-                      <div className="pt-1">
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {call.status !== 'Tamamlandı' && (
+                      <>
                         <button
                           type="button"
                           onClick={() => {
-                            onDeleteWaiterCall(call.id);
-                            setStatusToast(`${call.tableNumber} tamamlanan çağrı kaydı silindi.`);
+                            onDispatchWaiterCall?.(call.id);
+                            setStatusToast(`${call.tableNumber} çağrısına garson yönlendirildi.`);
                           }}
-                          className="px-2.5 py-1 rounded-lg border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 cursor-pointer text-[11px]"
+                          className="px-2.5 py-1 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
                         >
-                          <Trash2 className="w-3.5 h-3.5 inline mr-1" /> Çağrı Kaydını Sil
+                          Garson Yönlendir
                         </button>
-                      </div>
-                    )
-                  )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onResolveWaiterCall?.(call.id, call.tableId);
+                            setStatusToast(`${call.tableNumber} servis çağrısı tamamlandı.`);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white font-semibold cursor-pointer"
+                        >
+                          Servisi Tamamla
+                        </button>
+                      </>
+                    )}
+                    {onDeleteWaiterCall && (
+                      <button
+                        type="button"
+                        data-testid={`delete-waiter-call-${call.id}`}
+                        onClick={() => {
+                          onDeleteWaiterCall(call.id);
+                          setStatusToast(`${call.tableNumber} garson çağrısı silindi.`);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-500 font-semibold cursor-pointer ml-auto"
+                      >
+                        <Trash2 className="w-3 h-3" /> Sil
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* MODÜL 20 (Personel vardiyalar) kullanıcı talebiyle kaldırılmıştır */}
-
-      {/* =====================================================================
-          MODÜL 13: ÖDEMELER, POS TAHSİLAT & E-FATURA (SADECE ÖDEMELER)
-      ===================================================================== */}
-      {activeModuleId === 13 && (
-        <div className="space-y-6">
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="text-base font-semibold flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-[#B86B35]" />
-                  <span>POS Tahsilat, Ödeme Yöntemi Kırılımı &amp; Otomatik e-Fatura</span>
-                </h3>
-                <p className="text-neutral-500">
-                  Müşterilerin seçtiği ödeme yöntemlerini anlık izleyin, açık adisyonları POS’tan tahsil edin ve tek tıkla e-Arşiv fiş kesin.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onSwitchWorkspaceView('pos')}
-                className="px-3.5 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-              >
-                POS / Kasa Terminali →
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {orders.map((ord) => (
-                <div
-                  key={ord.id}
-                  className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 flex flex-col justify-between gap-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold text-[#B86B35] dark:text-[#D4AF6A]">
-                      {ord.orderNumber}
-                    </span>
-                    <span className="font-mono font-bold">{ord.totalAmount.toFixed(2)} ₺</span>
-                  </div>
-                  <div className="text-[11px] text-neutral-500">
-                    {ord.paymentMethod} · {ord.paymentStatus}
-                    {ord.receiptNumber ? ` · ${ord.receiptNumber}` : ''}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {ord.paymentStatus !== 'Ödendi' && onSettleOrderPayment && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const rem = Math.max(0, ord.totalAmount - ord.paidAmount);
-                          onSettleOrderPayment(ord.id, rem, ord.paymentMethod || 'POS Kredi Kartı');
-                          setStatusToast(`${ord.orderNumber} tahsil edildi & fiş kesildi.`);
-                        }}
-                        className="px-2 py-1 rounded bg-emerald-700 text-white font-semibold text-[11px] cursor-pointer"
-                      >
-                        Tahsil Et
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onIssueOrderReceiptAndInvoice?.(ord.id);
-                        const nums =
-                          ord.receiptNumber && ord.eInvoiceNo
-                            ? { receiptNumber: ord.receiptNumber, eInvoiceNo: ord.eInvoiceNo }
-                            : generateReceiptAndInvoiceNumbers(ord.orderNumber);
-                        setReceiptInvoiceModalOrder({
-                          ...ord,
-                          receiptNumber: nums.receiptNumber,
-                          eInvoiceNo: nums.eInvoiceNo,
-                          autoReceiptIssued: true,
-                        });
-                      }}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-[11px] font-semibold cursor-pointer"
-                    >
-                      <Printer className="w-3 h-3" /> Fiş / e-Fatura
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
 
@@ -4056,248 +4298,916 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       )}
 
       {/* =====================================================================
-          MODÜL 26, 27, 28, 29, 39: HER WEB SİTESİ AYARI KENDİ TEK BÖLÜMÜNDE
+          MODÜL 26, 27, 28, 29: HER WEB SİTESİ AYARI KENDİ TEK BÖLÜMÜNDE
       ===================================================================== */}
       {(activeModuleId === 26 ||
         activeModuleId === 27 ||
         activeModuleId === 28 ||
-        activeModuleId === 29 ||
-        activeModuleId === 39) && (
+        activeModuleId === 29) && (
         <AdminSiteBuilderManager
           key={`site-builder-${activeModuleId}`}
           siteCmsConfig={siteCmsConfig}
           onUpdateSiteCmsConfig={onUpdateSiteCmsConfig}
           onNotify={(msg) => setStatusToast(msg)}
           cmsPages={cmsPages}
+          categories={categories}
           onAddCmsPage={onAddCmsPage}
           onUpdateCmsPage={onUpdateCmsPage}
           onDeleteCmsPage={onDeleteCmsPage}
           singleSectionMode={true}
           defaultTab={
-            activeModuleId === 39
-              ? 'social_footer'
-              : activeModuleId === 29
+            activeModuleId === 29
               ? 'gallery_only'
               : activeModuleId === 28
               ? 'seo_only'
               : activeModuleId === 27
               ? 'menus_pages'
-              : 'announcement_header_logo'
+              : 'announcement_popup'
           }
         />
       )}
 
       {/* =====================================================================
-          MODÜL 31: ENTEGRASYONLAR & EKLENTİ MERKEZİ (GELİŞMİŞ API & YAPILANDIRMA)
+          MODÜL 31: EKLENTİLER (TÜM EKLENTİ, MODÜL VE ENTEGRASYONLAR TEK ÇATIDA)
       ===================================================================== */}
       {activeModuleId === 31 && (
         <div className="space-y-6">
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="text-base font-bold flex items-center gap-2">
-                  <Sliders className="w-5 h-5 text-[#B86B35] dark:text-[#D4AF6A]" />
-                  <span>31. Ödeme, POS, Kurye, Yazıcı &amp; Eklenti Yönetim Merkezi</span>
+                <h3 className="text-base font-semibold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#B86B35]" />
+                  <span>Eklentiler, Modüller &amp; Entegrasyon Merkezi ({integrations.length + siteCmsConfig.modules.widgets.length} Toplam)</span>
                 </h3>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  Tüm ödeme geçitleri, fiziksel POS cihazları, yemek platformları, termal fiş yazıcıları ve e-Fatura API servislerini tek ekrandan yapılandırın.
+                <p className="text-xs text-neutral-500">
+                  Ödeme sistemleri, yemek platformları, kurye, e-Fatura, yazıcı donanımı, WhatsApp ve vitrin bileşenlerinin her biri için özel ayarları buradan yönetin.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {onAddIntegration && (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewIntgForm((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Yeni Eklenti Ekle</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => triggerAiAnalysis('Entegrasyon ve Günlük Operasyon Özeti')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#B86B35] text-white cursor-pointer shadow-sm"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-[#B86B35] text-white cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>AI Entegrasyon Özeti</span>
+                  <span>AI Operasyon Özeti</span>
                 </button>
               </div>
             </div>
 
-            {/* Arama ve Kategori Filtreleri */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                {[
-                  'Tümü',
-                  'Ödeme',
-                  'Yemek Platformu',
-                  'Yazıcı',
-                  'SMS',
-                  'WhatsApp Business',
-                  'E-belge',
-                  'Muhasebe',
-                  'Harita',
-                  'Güvenlik',
-                ].map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setIntegrationCategoryFilter(cat)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                      integrationCategoryFilter === cat
-                        ? 'bg-[#B86B35] text-white'
-                        : 'border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+            {/* Kategori Filtreleme Sekmeleri */}
+            <div className="flex flex-wrap items-center gap-1.5 pb-2 border-b border-neutral-200 dark:border-neutral-800 text-xs">
+              {[
+                'Tümü',
+                'Ödeme',
+                'Yemek & Kurye',
+                'Muhasebe',
+                'İletişim & Harita',
+                'Donanım',
+                'Vitrin Bileşenleri',
+              ].map((catTab) => (
+                <button
+                  key={catTab}
+                  type="button"
+                  onClick={() => setPluginCategoryFilter(catTab)}
+                  className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer transition ${
+                    pluginCategoryFilter === catTab
+                      ? 'bg-[#B86B35] text-white'
+                      : 'bg-neutral-100 dark:bg-[#141413] text-neutral-600 dark:text-neutral-300'
+                  }`}
+                >
+                  {catTab}
+                </button>
+              ))}
+            </div>
+
+            {showNewIntgForm && onAddIntegration && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newIntgName.trim()) return;
+                  onAddIntegration({
+                    code: `PLG-${Date.now().toString().slice(-4)}`,
+                    name: newIntgName.trim(),
+                    category: newIntgCategory,
+                    installed: true,
+                    enabled: true,
+                    mode: 'Test (Sandbox)',
+                    version: newIntgVersion.trim() || '1.0.0',
+                    scope: newIntgScope.trim() || 'api.read_write',
+                    contractVerified: true,
+                    description: 'Yönetici tarafından eklenen özel entegrasyon eklentisi.',
+                    settings: {
+                      apiKey: '',
+                      webhookUrl: 'https://oztikeciger.com.tr/api/webhook',
+                      autoSync: true,
+                      timeoutMs: 5000,
+                    },
+                  });
+                  setNewIntgName('');
+                  setShowNewIntgForm(false);
+                  setStatusToast(`${newIntgName.trim()} eklentisi eklendi.`);
+                }}
+                className="rounded-xl border border-[#B86B35]/40 bg-neutral-50 dark:bg-[#141413] p-4 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end text-xs"
+              >
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold mb-1">Eklenti / Entegrasyon Adı *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newIntgName}
+                    onChange={(e) => setNewIntgName(e.target.value)}
+                    placeholder="Örn: Migros Yemek / Trendyol Go"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Kategori</label>
+                  <select
+                    value={newIntgCategory}
+                    onChange={(e) =>
+                      setNewIntgCategory(e.target.value as IntegrationPluginItem['category'])
+                    }
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                  >
+                    <option value="Ödeme">Ödeme</option>
+                    <option value="Yemek Platformu">Yemek Platformu</option>
+                    <option value="Kurye">Kurye</option>
+                    <option value="Yazıcı">Yazıcı</option>
+                    <option value="Muhasebe">Muhasebe</option>
+                    <option value="PWA & Bildirim">PWA &amp; Bildirim</option>
+                    <option value="Harita">Harita</option>
+                    <option value="Pazarlama">Pazarlama</option>
+                    <option value="WhatsApp Business">WhatsApp Business</option>
+                    <option value="Webhook">Webhook</option>
+                    <option value="Yapay zekâ">Yapay zekâ</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Yetki Kapsamı</label>
+                  <input
+                    type="text"
+                    value={newIntgScope}
+                    onChange={(e) => setNewIntgScope(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                >
+                  Eklentiyi Kaydet
+                </button>
+              </form>
+            )}
+
+            {pluginCategoryFilter !== 'Vitrin Bileşenleri' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 items-start gap-4">
+                {integrations
+                  .filter((intg) => {
+                    if (pluginCategoryFilter === 'Tümü') return true;
+                    if (pluginCategoryFilter === 'Ödeme') return intg.category === 'Ödeme';
+                    if (pluginCategoryFilter === 'Yemek & Kurye')
+                      return intg.category === 'Yemek Platformu' || intg.category === 'Kurye';
+                    if (pluginCategoryFilter === 'Muhasebe') return intg.category === 'Muhasebe';
+                    if (pluginCategoryFilter === 'İletişim & Harita')
+                      return (
+                        intg.category === 'WhatsApp Business' ||
+                        intg.category === 'Harita' ||
+                        intg.category === 'Pazarlama' ||
+                        intg.category === 'PWA & Bildirim'
+                      );
+                    if (pluginCategoryFilter === 'Donanım')
+                      return (
+                        intg.category === 'Yazıcı' ||
+                        intg.category === 'Webhook' ||
+                        intg.category === 'Yapay zekâ'
+                      );
+                    return true;
+                  })
+                  .map((intg) => {
+                    const isExpanded = expandedIntgId === intg.id;
+                    const settingsEntries = Object.entries(intg.settings || {});
+                    const keyDraft = newParamKeys[intg.id] || '';
+                    const valDraft = newParamVals[intg.id] || '';
+                    const updateIntgSetting = (key: string, val: string | number | boolean) => {
+                      if (!onUpdateIntegration) return;
+                      const nextSettings = { ...(intg.settings || {}), [key]: val };
+                      onUpdateIntegration({ ...intg, settings: nextSettings });
+                      setPluginJsonDrafts((prev) => ({
+                        ...prev,
+                        [intg.id]: JSON.stringify(nextSettings, null, 2),
+                      }));
+                    };
+
+                return (
+                  <div
+                    key={intg.id}
+                    data-testid={`plugin-card-${intg.id}`}
+                    className={`rounded-xl border p-4 flex flex-col justify-between gap-3 text-xs ${
+                      intg.enabled
+                        ? 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#141413]/70'
+                        : 'border-neutral-300/60 dark:border-neutral-800/50 opacity-75'
                     }`}
                   >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-
-              <input
-                type="search"
-                value={integrationSearchQuery}
-                onChange={(e) => setIntegrationSearchQuery(e.target.value)}
-                placeholder="Eklenti veya API ara..."
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 text-xs w-48"
-              />
-            </div>
-
-            {/* Entegrasyon Kartları Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
-              {integrations
-                .filter(
-                  (intg) =>
-                    integrationCategoryFilter === 'Tümü' ||
-                    intg.category === integrationCategoryFilter ||
-                    (integrationCategoryFilter === 'Ödeme' && (intg.category === 'Ödeme' || intg.code.includes('pos')))
-                )
-                .filter(
-                  (intg) =>
-                    !integrationSearchQuery.trim() ||
-                    `${intg.name} ${intg.code} ${intg.category} ${intg.description || ''}`
-                      .toLowerCase()
-                      .includes(integrationSearchQuery.toLowerCase())
-                )
-                .map((intg) => {
-                  const isEnabled = intg.enabled;
-                  const isLive = intg.mode === 'Canlı (Live)';
-
-                  return (
-                    <div
-                      key={intg.id}
-                      className={`rounded-xl border p-4 flex flex-col justify-between gap-3 text-xs transition-all shadow-xs ${
-                        isEnabled
-                          ? 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A1815]'
-                          : 'border-neutral-300/60 dark:border-neutral-800/60 bg-neutral-100/60 dark:bg-[#141413]/60 opacity-75'
-                      }`}
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="font-semibold px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">
-                            {intg.category}
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                isLive
-                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                              }`}
-                            >
-                              {intg.mode}
-                            </span>
-                            <span className="font-mono text-neutral-400 text-[10px]">v{intg.version}</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="font-bold text-sm text-neutral-900 dark:text-[#F5F2EB] flex items-center justify-between gap-1">
-                            <span>{intg.name}</span>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-500">
+                        <span className="px-2 py-0.5 rounded bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A] font-bold">
+                          {intg.category}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">v{intg.version}</span>
+                          {onUpdateIntegration && (
                             <button
                               type="button"
-                              onClick={() => onToggleIntegrationActive?.(intg.id)}
-                              title={isEnabled ? 'Devre Dışı Bırak' : 'Etkinleştir'}
-                              className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer shrink-0 ${
-                                isEnabled ? 'bg-emerald-600' : 'bg-neutral-400 dark:bg-neutral-700'
+                              onClick={() => {
+                                onUpdateIntegration({ ...intg, enabled: !intg.enabled });
+                                setStatusToast(
+                                  `${intg.name} ${intg.enabled ? 'devre dışı bırakıldı' : 'aktifleştirildi'}.`
+                                );
+                              }}
+                              className={`px-2 py-0.5 rounded font-bold cursor-pointer ${
+                                intg.enabled
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-neutral-300 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200'
                               }`}
                             >
-                              <div
-                                className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                                  isEnabled ? 'translate-x-4' : 'translate-x-0'
-                                }`}
-                              />
+                              {intg.enabled ? 'Aktif' : 'Pasif'}
                             </button>
-                          </div>
-                          <p className="text-[11px] text-neutral-500 mt-1 line-clamp-2">
-                            {intg.description || 'Restoran otomasyon ve API bağlantı köprüsü.'}
-                          </p>
-                        </div>
-
-                        <div className="rounded-lg bg-neutral-50 dark:bg-[#141413] p-2 space-y-1 font-mono text-[10px] text-neutral-500">
-                          <div className="flex justify-between">
-                            <span>API Durumu:</span>
-                            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                              {intg.advancedConfig?.apiKey ? 'Özel Anahtar Tanımlı' : 'Varsayılan Aktif'}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Protokol &amp; Ağ:</span>
-                            <span>
-                              {intg.advancedConfig?.ipAddress
-                                ? `${intg.advancedConfig.ipAddress}:${intg.advancedConfig.port || 9100}`
-                                : intg.advancedConfig?.endpointUrl
-                                ? 'REST / JSON-RPC'
-                                : 'Bulut HTTPS'}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Son Doğrulama:</span>
-                            <span className="truncate max-w-[140px]">{intg.lastTested}</span>
-                          </div>
+                          )}
                         </div>
                       </div>
-
-                      <div className="space-y-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenIntegrationConfig(intg)}
-                          className="w-full py-2 px-3 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-colors"
-                        >
-                          <Settings className="w-3.5 h-3.5" />
-                          <span>Gelişmiş Ayarlar &amp; API</span>
-                        </button>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleTestPingIntegration(intg)}
-                            className="flex-1 py-1.5 px-2 rounded-lg border border-neutral-300 dark:border-neutral-700 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer flex items-center justify-center gap-1 text-[11px]"
-                          >
-                            <Activity className="w-3 h-3 text-[#B86B35]" />
-                            <span>Bağlantı Testi</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onToggleIntegrationMode(intg.id);
-                              setStatusToast(`${intg.name} çalışma modu değiştirildi.`);
-                            }}
-                            className="py-1.5 px-2.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer text-[11px]"
-                          >
-                            Mod Değiştir
-                          </button>
-                        </div>
+                      <div className="font-bold text-sm text-neutral-900 dark:text-[#F5F2EB]">
+                        {intg.name}
+                      </div>
+                      {intg.description && (
+                        <p className="text-[11px] text-neutral-500 leading-relaxed">{intg.description}</p>
+                      )}
+                      <div className="font-mono text-[11px] text-neutral-500">
+                        Yetki: {intg.scope} · Parametre: {settingsEntries.length}
+                      </div>
+                      <div className="text-[11px] text-neutral-500">
+                        Mod: <strong>{intg.mode}</strong> · Son Test: {intg.lastTested}
                       </div>
                     </div>
-                  );
-                })}
-            </div>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onTestIntegration(intg.id);
+                          setStatusToast(`${intg.name} bağlantı testi başarıyla doğrulandı.`);
+                        }}
+                        className="py-1.5 px-2.5 rounded border border-neutral-300 dark:border-neutral-700 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                      >
+                        Bağlantı Testi
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onToggleIntegrationMode(intg.id);
+                          setStatusToast(`${intg.name} çalışma modu değiştirildi.`);
+                        }}
+                        className="py-1.5 px-2.5 rounded bg-neutral-900 dark:bg-[#F5F2EB] text-white dark:text-[#141413] font-medium cursor-pointer"
+                      >
+                        Mod Değiştir
+                      </button>
+                      {onUpdateIntegration && (
+                        <button
+                          type="button"
+                          data-testid={`plugin-settings-btn-${intg.id}`}
+                          onClick={() => setExpandedIntgId(isExpanded ? null : intg.id)}
+                          className={`inline-flex items-center gap-1 py-1.5 px-2.5 rounded font-semibold cursor-pointer ${
+                            isExpanded
+                              ? 'bg-[#B86B35] text-white'
+                              : 'border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A]'
+                          }`}
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                          <span>{isExpanded ? 'Ayarları Gizle' : 'Gelişmiş Ayarlar'}</span>
+                        </button>
+                      )}
+                      {onDeleteIntegration && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteIntegration(intg.id);
+                            setStatusToast(`${intg.name} eklentisi silindi.`);
+                          }}
+                          className="p-1.5 rounded text-rose-500 hover:bg-rose-500/10 cursor-pointer ml-auto"
+                          aria-label={`${intg.name} sil`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {isExpanded && onUpdateIntegration && (() => {
+                      const activeTab = pluginConfigTab[intg.id] || 'form';
+                      const jsonDraft =
+                        pluginJsonDrafts[intg.id] ??
+                        JSON.stringify(intg.settings || {}, null, 2);
+                      const jsonFeedback = pluginJsonFeedback[intg.id];
+                      const paramType = newParamTypes[intg.id] || 'string';
+
+                      return (
+                        <div
+                          data-testid={`plugin-settings-panel-${intg.id}`}
+                          className="pt-3 mt-1 border-t border-[#B86B35]/30 space-y-3 bg-white dark:bg-[#1A1A18] p-3.5 rounded-xl"
+                        >
+                          {/* Dedicated Plugin Header & Mode Switcher */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-neutral-200 dark:border-neutral-800">
+                            <div className="text-[11px] font-bold text-[#B86B35] dark:text-[#D4AF6A]">
+                              {intg.name} · Özel Konfigürasyon &amp; Parametre Yöneticisi
+                            </div>
+                            <div className="flex items-center gap-1 bg-neutral-100 dark:bg-[#141413] p-0.5 rounded-lg">
+                              <button
+                                type="button"
+                                data-testid={`plugin-form-tab-${intg.id}`}
+                                onClick={() =>
+                                  setPluginConfigTab((prev) => ({ ...prev, [intg.id]: 'form' }))
+                                }
+                                className={`px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer ${
+                                  activeTab === 'form'
+                                    ? 'bg-[#B86B35] text-white'
+                                    : 'text-neutral-500'
+                                }`}
+                              >
+                                Dinamik Giriş Alanları
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`plugin-json-tab-${intg.id}`}
+                                onClick={() => {
+                                  setPluginJsonDrafts((prev) => ({
+                                    ...prev,
+                                    [intg.id]: JSON.stringify(intg.settings || {}, null, 2),
+                                  }));
+                                  setPluginConfigTab((prev) => ({ ...prev, [intg.id]: 'json' }));
+                                }}
+                                className={`px-2.5 py-1 rounded-md text-[10px] font-mono font-bold cursor-pointer ${
+                                  activeTab === 'json'
+                                    ? 'bg-[#B86B35] text-white'
+                                    : 'text-neutral-500'
+                                }`}
+                              >
+                                JSON Konfigürasyon ({'{ }'})
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                                Eklenti Adı
+                              </label>
+                              <input
+                                type="text"
+                                value={intg.name}
+                                onChange={(e) =>
+                                  onUpdateIntegration({ ...intg, name: e.target.value })
+                                }
+                                className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                                Yetki Kapsamı (Scope)
+                              </label>
+                              <input
+                                type="text"
+                                value={intg.scope}
+                                onChange={(e) =>
+                                  onUpdateIntegration({ ...intg, scope: e.target.value })
+                                }
+                                className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 text-xs font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                                Versiyon
+                              </label>
+                              <input
+                                type="text"
+                                value={intg.version}
+                                onChange={(e) =>
+                                  onUpdateIntegration({ ...intg, version: e.target.value })
+                                }
+                                className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 text-xs font-mono"
+                              />
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                                Eklenti Açıklaması &amp; Görevi
+                              </label>
+                              <input
+                                type="text"
+                                value={intg.description || ''}
+                                onChange={(e) =>
+                                  onUpdateIntegration({ ...intg, description: e.target.value })
+                                }
+                                className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 text-xs"
+                              />
+                            </div>
+                          </div>
+
+                          {activeTab === 'form' ? (
+                            <>
+                              {/* Kategoriye Özel Hazır Ayar Profilleri */}
+                              <div className="rounded-lg border border-[#B86B35]/25 bg-neutral-50 dark:bg-[#141413] p-3 space-y-2">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-[#B86B35] dark:text-[#D4AF6A]">
+                                  {intg.category} Kategorisi · Özel Ayar Profili
+                                </div>
+                                {intg.category === 'Ödeme' && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Üye İşyeri / Merchant ID</label>
+                                      <input
+                                        type="text"
+                                        value={String(intg.settings?.merchantId ?? '')}
+                                        onChange={(e) => updateIntgSetting('merchantId', e.target.value)}
+                                        placeholder="Örn: 482910"
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Komisyon Oranı (%)</label>
+                                      <input
+                                        type="number"
+                                        step="0.05"
+                                        value={Number(intg.settings?.commissionPercent ?? 1.95)}
+                                        onChange={(e) => updateIntgSetting('commissionPercent', Number(e.target.value))}
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                      />
+                                    </div>
+                                    <label className="inline-flex items-center gap-1.5 self-end pb-1 cursor-pointer font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(intg.settings?.force3DSecure ?? true)}
+                                        onChange={(e) => updateIntgSetting('force3DSecure', e.target.checked)}
+                                      />
+                                      <span>3D Secure Zorunlu</span>
+                                    </label>
+                                  </div>
+                                )}
+                                {intg.category === 'Yemek Platformu' && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Restoran / Şube Kodu</label>
+                                      <input
+                                        type="text"
+                                        value={String(intg.settings?.restaurantId ?? '')}
+                                        onChange={(e) => updateIntgSetting('restaurantId', e.target.value)}
+                                        placeholder="REST-2701"
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                      />
+                                    </div>
+                                    <label className="inline-flex items-center gap-1.5 self-end pb-1 cursor-pointer font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(intg.settings?.autoAcceptOrders ?? true)}
+                                        onChange={(e) => updateIntgSetting('autoAcceptOrders', e.target.checked)}
+                                      />
+                                      <span>Siparişleri Otomatik Onayla</span>
+                                    </label>
+                                    <label className="inline-flex items-center gap-1.5 self-end pb-1 cursor-pointer font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(intg.settings?.menuPriceSync ?? true)}
+                                        onChange={(e) => updateIntgSetting('menuPriceSync', e.target.checked)}
+                                      />
+                                      <span>Fiyat &amp; Stok Senkronizasyonu</span>
+                                    </label>
+                                  </div>
+                                )}
+                                {intg.category === 'Kurye' && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Maksimum Yarıçap (km)</label>
+                                      <input
+                                        type="number"
+                                        value={Number(intg.settings?.maxRadiusKm ?? 8)}
+                                        onChange={(e) => updateIntgSetting('maxRadiusKm', Number(e.target.value))}
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Tahmini Teslim (dk)</label>
+                                      <input
+                                        type="number"
+                                        value={Number(intg.settings?.etaMinutes ?? 30)}
+                                        onChange={(e) => updateIntgSetting('etaMinutes', Number(e.target.value))}
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                      />
+                                    </div>
+                                    <label className="inline-flex items-center gap-1.5 self-end pb-1 cursor-pointer font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(intg.settings?.autoDispatchCourier ?? true)}
+                                        onChange={(e) => updateIntgSetting('autoDispatchCourier', e.target.checked)}
+                                      />
+                                      <span>Otomatik Kurye Çağır</span>
+                                    </label>
+                                  </div>
+                                )}
+                                {intg.category === 'Yazıcı' && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Yazıcı IP / Port</label>
+                                      <input
+                                        type="text"
+                                        value={String(intg.settings?.printerIp ?? '192.168.1.210:9100')}
+                                        onChange={(e) => updateIntgSetting('printerIp', e.target.value)}
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] font-semibold mb-0.5">Rulo Genişliği (mm)</label>
+                                      <select
+                                        value={Number(intg.settings?.paperWidthMm ?? 80)}
+                                        onChange={(e) => updateIntgSetting('paperWidthMm', Number(e.target.value))}
+                                        className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1"
+                                      >
+                                        <option value={80}>80mm</option>
+                                        <option value={58}>58mm</option>
+                                      </select>
+                                    </div>
+                                    <label className="inline-flex items-center gap-1.5 self-end pb-1 cursor-pointer font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(intg.settings?.autoCut ?? true)}
+                                        onChange={(e) => updateIntgSetting('autoCut', e.target.checked)}
+                                      />
+                                      <span>Otomatik Kağıt Kesim</span>
+                                    </label>
+                                  </div>
+                                )}
+                                {intg.category !== 'Ödeme' &&
+                                  intg.category !== 'Yemek Platformu' &&
+                                  intg.category !== 'Kurye' &&
+                                  intg.category !== 'Yazıcı' && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                      <div>
+                                        <label className="block text-[10px] font-semibold mb-0.5">Webhook / Endpoint URL</label>
+                                        <input
+                                          type="text"
+                                          value={String(intg.settings?.webhookUrl ?? '')}
+                                          onChange={(e) => updateIntgSetting('webhookUrl', e.target.value)}
+                                          placeholder="https://..."
+                                          className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-semibold mb-0.5">Zaman Aşımı (ms)</label>
+                                        <input
+                                          type="number"
+                                          value={Number(intg.settings?.timeoutMs ?? 5000)}
+                                          onChange={(e) => updateIntgSetting('timeoutMs', Number(e.target.value))}
+                                          className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-2 py-1 font-mono"
+                                        />
+                                      </div>
+                                      <label className="inline-flex items-center gap-1.5 self-end pb-1 cursor-pointer font-semibold">
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(intg.settings?.autoSync ?? true)}
+                                          onChange={(e) => updateIntgSetting('autoSync', e.target.checked)}
+                                        />
+                                        <span>Gerçek Zamanlı Senkronizasyon</span>
+                                      </label>
+                                    </div>
+                                  )}
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-[#B86B35] dark:text-[#D4AF6A]">
+                                  Dinamik Konfigürasyon Alanları ({settingsEntries.length} Alan)
+                                </div>
+                                {settingsEntries.map(([sKey, sVal]) => {
+                                  const isSecret = /secret|key|token|password|pin/i.test(sKey);
+                                  const secretId = `${intg.id}:${sKey}`;
+                                  const isRevealed = Boolean(revealedSecrets[secretId]);
+                                  return (
+                                    <div
+                                      key={sKey}
+                                      className="flex flex-wrap sm:flex-nowrap items-center gap-2"
+                                    >
+                                      <span className="w-40 shrink-0 truncate font-mono text-[11px] text-neutral-500">
+                                        {sKey}
+                                      </span>
+                                      {typeof sVal === 'boolean' ? (
+                                        <label className="inline-flex items-center gap-2 cursor-pointer flex-1">
+                                          <input
+                                            type="checkbox"
+                                            checked={sVal}
+                                            onChange={(e) => {
+                                              const nextSettings = {
+                                                ...(intg.settings || {}),
+                                                [sKey]: e.target.checked,
+                                              };
+                                              onUpdateIntegration({
+                                                ...intg,
+                                                settings: nextSettings,
+                                              });
+                                              setPluginJsonDrafts((prev) => ({
+                                                ...prev,
+                                                [intg.id]: JSON.stringify(nextSettings, null, 2),
+                                              }));
+                                            }}
+                                          />
+                                          <span className="font-semibold">
+                                            {sVal ? 'Aktif (True)' : 'Kapalı (False)'}
+                                          </span>
+                                        </label>
+                                      ) : (
+                                        <div className="flex-1 flex items-center gap-1 min-w-[140px]">
+                                          <input
+                                            type={
+                                              isSecret && !isRevealed
+                                                ? 'password'
+                                                : typeof sVal === 'number'
+                                                ? 'number'
+                                                : 'text'
+                                            }
+                                            value={String(sVal)}
+                                            onChange={(e) => {
+                                              const parsedVal =
+                                                typeof sVal === 'number'
+                                                  ? Number(e.target.value)
+                                                  : e.target.value;
+                                              const nextSettings = {
+                                                ...(intg.settings || {}),
+                                                [sKey]: parsedVal,
+                                              };
+                                              onUpdateIntegration({
+                                                ...intg,
+                                                settings: nextSettings,
+                                              });
+                                              setPluginJsonDrafts((prev) => ({
+                                                ...prev,
+                                                [intg.id]: JSON.stringify(nextSettings, null, 2),
+                                              }));
+                                            }}
+                                            className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1 text-xs font-mono"
+                                          />
+                                          {isSecret && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setRevealedSecrets((prev) => ({
+                                                  ...prev,
+                                                  [secretId]: !prev[secretId],
+                                                }))
+                                              }
+                                              className="p-1.5 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                                              aria-label={`${sKey} göster/gizle`}
+                                            >
+                                              {isRevealed ? (
+                                                <EyeOff className="w-3.5 h-3.5" />
+                                              ) : (
+                                                <Eye className="w-3.5 h-3.5" />
+                                              )}
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const copy = { ...(intg.settings || {}) };
+                                          delete copy[sKey];
+                                          onUpdateIntegration({ ...intg, settings: copy });
+                                          setPluginJsonDrafts((prev) => ({
+                                            ...prev,
+                                            [intg.id]: JSON.stringify(copy, null, 2),
+                                          }));
+                                        }}
+                                        className="p-1 text-rose-500 cursor-pointer"
+                                        aria-label={`${sKey} parametresini kaldır`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                                <input
+                                  type="text"
+                                  value={keyDraft}
+                                  onChange={(e) =>
+                                    setNewParamKeys((prev) => ({
+                                      ...prev,
+                                      [intg.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Alan adı (örn: webhookSecret)"
+                                  className="flex-1 min-w-[120px] rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1 text-xs font-mono"
+                                />
+                                <select
+                                  value={paramType}
+                                  onChange={(e) =>
+                                    setNewParamTypes((prev) => ({
+                                      ...prev,
+                                      [intg.id]: e.target.value as
+                                        | 'string'
+                                        | 'number'
+                                        | 'boolean'
+                                        | 'secret',
+                                    }))
+                                  }
+                                  className="rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1 text-xs"
+                                >
+                                  <option value="string">Metin</option>
+                                  <option value="number">Sayı</option>
+                                  <option value="boolean">Boolean</option>
+                                  <option value="secret">Gizli Anahtar</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  value={valDraft}
+                                  onChange={(e) =>
+                                    setNewParamVals((prev) => ({
+                                      ...prev,
+                                      [intg.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Değer..."
+                                  className="flex-1 min-w-[100px] rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!keyDraft.trim()) return;
+                                    const finalKey =
+                                      paramType === 'secret' &&
+                                      !/secret|key|token/i.test(keyDraft.trim())
+                                        ? `${keyDraft.trim()}Secret`
+                                        : keyDraft.trim();
+                                    const parsed: string | number | boolean =
+                                      paramType === 'boolean' ||
+                                      valDraft === 'true' ||
+                                      valDraft === 'false'
+                                        ? valDraft === 'true'
+                                        : paramType === 'number' ||
+                                          (valDraft !== '' && !Number.isNaN(Number(valDraft)))
+                                        ? Number(valDraft) || 0
+                                        : valDraft;
+                                    const nextSettings = {
+                                      ...(intg.settings || {}),
+                                      [finalKey]: parsed,
+                                    };
+                                    onUpdateIntegration({
+                                      ...intg,
+                                      settings: nextSettings,
+                                    });
+                                    setPluginJsonDrafts((prev) => ({
+                                      ...prev,
+                                      [intg.id]: JSON.stringify(nextSettings, null, 2),
+                                    }));
+                                    setNewParamKeys((prev) => ({ ...prev, [intg.id]: '' }));
+                                    setNewParamVals((prev) => ({ ...prev, [intg.id]: '' }));
+                                    setStatusToast(
+                                      `${intg.name}: "${finalKey}" dinamik alanı eklendi.`
+                                    );
+                                  }}
+                                  className="px-3 py-1 rounded bg-[#B86B35] text-white font-bold text-xs cursor-pointer"
+                                >
+                                  + Alan Ekle
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            /* JSON Tabanlı Özel Konfigürasyon Editörü */
+                            <div className="space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[#B86B35] dark:text-[#D4AF6A]">
+                                  JSON Tabanlı Özel Konfigürasyon (Şema Doğrulamalı)
+                                </span>
+                                <span className="text-[10px] font-mono text-neutral-500">
+                                  string · number · boolean
+                                </span>
+                              </div>
+                              <textarea
+                                rows={7}
+                                data-testid={`plugin-json-textarea-${intg.id}`}
+                                value={jsonDraft}
+                                onChange={(e) =>
+                                  setPluginJsonDrafts((prev) => ({
+                                    ...prev,
+                                    [intg.id]: e.target.value,
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-[#141413] text-emerald-300 p-3 font-mono text-[11px]"
+                              />
+                              {jsonFeedback && (
+                                <div
+                                  className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold ${
+                                    jsonFeedback.ok
+                                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                      : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                  }`}
+                                >
+                                  {jsonFeedback.msg}
+                                </div>
+                              )}
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const formatted = JSON.stringify(intg.settings || {}, null, 2);
+                                    setPluginJsonDrafts((prev) => ({
+                                      ...prev,
+                                      [intg.id]: formatted,
+                                    }));
+                                    setPluginJsonFeedback((prev) => ({
+                                      ...prev,
+                                      [intg.id]: {
+                                        ok: true,
+                                        msg: 'Mevcut aktif JSON konfigürasyonu geri yüklendi.',
+                                      },
+                                    }));
+                                  }}
+                                  className="px-2.5 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-xs font-semibold cursor-pointer"
+                                >
+                                  Sıfırla
+                                </button>
+                                <button
+                                  type="button"
+                                  data-testid={`plugin-json-save-${intg.id}`}
+                                  onClick={() => {
+                                    const res = validatePluginJsonConfig(jsonDraft);
+                                    if (!res.valid || !res.parsed) {
+                                      setPluginJsonFeedback((prev) => ({
+                                        ...prev,
+                                        [intg.id]: {
+                                          ok: false,
+                                          msg: res.error || 'JSON hatası',
+                                        },
+                                      }));
+                                      return;
+                                    }
+                                    onUpdateIntegration({
+                                      ...intg,
+                                      settings: res.parsed,
+                                    });
+                                    setPluginJsonDrafts((prev) => ({
+                                      ...prev,
+                                      [intg.id]: JSON.stringify(res.parsed, null, 2),
+                                    }));
+                                    setPluginJsonFeedback((prev) => ({
+                                      ...prev,
+                                      [intg.id]: {
+                                        ok: true,
+                                        msg: 'JSON konfigürasyonu doğrulandı ve eklentiye uygulandı.',
+                                      },
+                                    }));
+                                    setStatusToast(
+                                      `${intg.name} JSON konfigürasyonu başarıyla güncellendi.`
+                                    );
+                                  }}
+                                  className="px-3 py-1 rounded bg-[#B86B35] text-white font-bold text-xs cursor-pointer"
+                                >
+                                  JSON Doğrula &amp; Kaydet
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+              </div>
+            )}
           </div>
 
-          <AdminSiteBuilderManager
-            key="site-builder-31"
-            siteCmsConfig={siteCmsConfig}
-            onUpdateSiteCmsConfig={onUpdateSiteCmsConfig}
-            onNotify={(msg) => setStatusToast(msg)}
-            cmsPages={cmsPages}
-            onAddCmsPage={onAddCmsPage}
-            onUpdateCmsPage={onUpdateCmsPage}
-            onDeleteCmsPage={onDeleteCmsPage}
-            singleSectionMode={true}
-            defaultTab="modules_only"
-          />
+          {(pluginCategoryFilter === 'Tümü' || pluginCategoryFilter === 'Vitrin Bileşenleri') && (
+            <AdminSiteBuilderManager
+              key="site-builder-31"
+              siteCmsConfig={siteCmsConfig}
+              onUpdateSiteCmsConfig={onUpdateSiteCmsConfig}
+              onNotify={(msg) => setStatusToast(msg)}
+              cmsPages={cmsPages}
+              categories={categories}
+              onAddCmsPage={onAddCmsPage}
+              onUpdateCmsPage={onUpdateCmsPage}
+              onDeleteCmsPage={onDeleteCmsPage}
+              singleSectionMode={true}
+              defaultTab="modules_only"
+            />
+          )}
         </div>
       )}
 
@@ -4487,17 +5397,17 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       )}
 
       {/* =====================================================================
-          MODÜL 34: GÖRÜNÜM AYARLARI & TEMA YÖNETİMİ
+          MODÜL 34: TASARIM MERKEZİ (TEMA, LOGO, HEADER, NAVBAR, SLIDER, BLOK, KART, BUTON, FOOTER)
       ===================================================================== */}
       {activeModuleId === 34 && (
         <div className="space-y-6">
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="text-base font-semibold">
-                Yönetim Paneli Tema Tercihi (Açık / Koyu / Sistem)
+                Yönetim Paneli Arayüz Teması (Açık / Koyu / Sistem)
               </h3>
               <p className="text-xs text-neutral-500">
-                Tercihiniz yerel bellekte saklanır ve arayüz kontrastı otomatik uyarlanır.
+                Tercihiniz yerel bellekte saklanır ve yönetim paneli kontrastı otomatik uyarlanır.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -4512,7 +5422,7 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                   key={t.id}
                   type="button"
                   onClick={() => onChangeThemeMode(t.id)}
-                  className={`px-3.5 py-2 text-xs font-medium rounded-lg ${
+                  className={`px-3.5 py-2 text-xs font-medium rounded-lg cursor-pointer ${
                     themeMode === t.id
                       ? 'bg-[#B86B35] text-white'
                       : 'border border-neutral-300 dark:border-neutral-700'
@@ -4530,31 +5440,141 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
             onUpdateSiteCmsConfig={onUpdateSiteCmsConfig}
             onNotify={(msg) => setStatusToast(msg)}
             cmsPages={cmsPages}
+            categories={categories}
             onAddCmsPage={onAddCmsPage}
             onUpdateCmsPage={onUpdateCmsPage}
             onDeleteCmsPage={onDeleteCmsPage}
             singleSectionMode={true}
-            defaultTab="slider_cards_blocks_theme"
+            defaultTab="design_studio"
           />
         </div>
       )}
 
       {/* =====================================================================
-          MODÜL 35: SİSTEM GENEL AYARLARI (SADECE GENEL AYARLAR)
+          MODÜL 35: SİSTEM GENEL AYARLARI & PASİF / AKTİF MODÜLLER
       ===================================================================== */}
       {activeModuleId === 35 && (
-        <AdminSiteBuilderManager
-          key="site-builder-35"
-          siteCmsConfig={siteCmsConfig}
-          onUpdateSiteCmsConfig={onUpdateSiteCmsConfig}
-          onNotify={(msg) => setStatusToast(msg)}
-          cmsPages={cmsPages}
-          onAddCmsPage={onAddCmsPage}
-          onUpdateCmsPage={onUpdateCmsPage}
-          onDeleteCmsPage={onDeleteCmsPage}
-          singleSectionMode={true}
-          defaultTab="general_only"
-        />
+        <div className="space-y-6">
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
+            <div className="flex items-center gap-2">
+              <Power className="w-4 h-4 text-[#B86B35]" />
+              <div>
+                <h3 className="text-base font-semibold">Sistem Operasyon Modülleri (Aktif / Pasif Kontrolü)</h3>
+                <p className="text-neutral-500">
+                  Mutfak (KDS) ve Masa Seçme modüllerini dilediğiniz zaman pasife alabilir veya yeniden aktifleştirebilirsiniz.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-sm">Mutfak Ekranı (KDS) Modülü</div>
+                  <div className="text-[11px] text-neutral-500 mt-0.5">
+                    Pasif olduğunda üst çubukta KDS kısayolu gizlenir; istediğiniz an aktifleştirebilirsiniz.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="toggle-kitchen-module-btn"
+                  onClick={() => {
+                    const next = !(siteCmsConfig.operationalSettings?.kitchenModuleEnabled ?? false);
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      operationalSettings: {
+                        ...prev.operationalSettings,
+                        kitchenModuleEnabled: next,
+                      },
+                    }));
+                    setStatusToast(`Mutfak (KDS) modülü ${next ? 'aktifleştirildi' : 'pasife alındı'}.`);
+                  }}
+                  className={`px-3.5 py-2 rounded-lg font-bold cursor-pointer shrink-0 ${
+                    siteCmsConfig.operationalSettings?.kitchenModuleEnabled
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-neutral-300 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
+                  }`}
+                >
+                  {siteCmsConfig.operationalSettings?.kitchenModuleEnabled ? 'Aktif' : 'Pasif'}
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-sm">Masa Seçme Modülü</div>
+                  <div className="text-[11px] text-neutral-500 mt-0.5">
+                    Pasif olduğunda müşteriler ve kasa masa seçmeden doğrudan hızlı sipariş verebilir.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="toggle-table-selection-btn"
+                  onClick={() => {
+                    const next = !(siteCmsConfig.operationalSettings?.tableSelectionEnabled ?? false);
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      operationalSettings: {
+                        ...prev.operationalSettings,
+                        tableSelectionEnabled: next,
+                      },
+                    }));
+                    setStatusToast(`Masa Seçme modülü ${next ? 'aktifleştirildi' : 'pasife alındı'}.`);
+                  }}
+                  className={`px-3.5 py-2 rounded-lg font-bold cursor-pointer shrink-0 ${
+                    siteCmsConfig.operationalSettings?.tableSelectionEnabled
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-neutral-300 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
+                  }`}
+                >
+                  {siteCmsConfig.operationalSettings?.tableSelectionEnabled ? 'Aktif' : 'Pasif'}
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-sm">Sipariş Takibi Modülü</div>
+                  <div className="text-[11px] text-neutral-500 mt-0.5">
+                    Pasif olduğunda müşteri sepetindeki canlı aşama/kurye takip çubuğu gizlenir; istediğiniz an açabilirsiniz.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="toggle-order-tracking-btn"
+                  onClick={() => {
+                    const next = !(siteCmsConfig.operationalSettings?.orderTrackingEnabled ?? false);
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      operationalSettings: {
+                        ...prev.operationalSettings,
+                        orderTrackingEnabled: next,
+                      },
+                    }));
+                    setStatusToast(`Sipariş Takibi modülü ${next ? 'aktifleştirildi' : 'pasife alındı'}.`);
+                  }}
+                  className={`px-3.5 py-2 rounded-lg font-bold cursor-pointer shrink-0 ${
+                    siteCmsConfig.operationalSettings?.orderTrackingEnabled
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-neutral-300 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
+                  }`}
+                >
+                  {siteCmsConfig.operationalSettings?.orderTrackingEnabled ? 'Aktif' : 'Pasif'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <AdminSiteBuilderManager
+            key="site-builder-35"
+            siteCmsConfig={siteCmsConfig}
+            onUpdateSiteCmsConfig={onUpdateSiteCmsConfig}
+            onNotify={(msg) => setStatusToast(msg)}
+            cmsPages={cmsPages}
+            categories={categories}
+            onAddCmsPage={onAddCmsPage}
+            onUpdateCmsPage={onUpdateCmsPage}
+            onDeleteCmsPage={onDeleteCmsPage}
+            singleSectionMode={true}
+            defaultTab="general_only"
+          />
+        </div>
       )}
 
       {/* =====================================================================
@@ -4841,10 +5861,76 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
       )}
 
       {/* =====================================================================
-          MODÜL 3: MASALAR – GÖRSEL MASA PLANI HARİTASI (DOLU, BOŞ, HESAP BEKLİYOR, HAZIRLANIYOR)
+          MODÜL 3: MASALAR – GÖRSEL MASA PLANI & MASA AYARLARI (TOKEN YOK)
       ===================================================================== */}
       {activeModuleId === 3 && (
         <div className="space-y-6">
+          {/* Masa Seçme & QR Tarama Ayarları (Eski Modül 4'ten taşındı) */}
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4 flex flex-wrap items-center justify-between gap-4 text-xs">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="font-bold">Masa Seçme Modülü:</span>
+                <button
+                  type="button"
+                  data-testid="tables-module-toggle-selection"
+                  onClick={() => {
+                    const next = !(siteCmsConfig.operationalSettings?.tableSelectionEnabled ?? false);
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      operationalSettings: {
+                        ...prev.operationalSettings,
+                        tableSelectionEnabled: next,
+                      },
+                    }));
+                    setStatusToast(`Masa seçimi ${next ? 'aktifleştirildi' : 'pasife alındı'}.`);
+                  }}
+                  className={`px-3 py-1 rounded-lg font-bold cursor-pointer ${
+                    siteCmsConfig.operationalSettings?.tableSelectionEnabled
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/40'
+                  }`}
+                >
+                  {siteCmsConfig.operationalSettings?.tableSelectionEnabled ? 'Aktif' : 'Pasif (Doğrudan Sipariş)'}
+                </button>
+              </div>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium">
+                <input
+                  type="checkbox"
+                  checked={siteCmsConfig.operationalSettings?.qrRequireScan ?? false}
+                  onChange={(e) =>
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      operationalSettings: {
+                        ...prev.operationalSettings,
+                        qrRequireScan: e.target.checked,
+                      },
+                    }))
+                  }
+                />
+                <span>Masa QR Doğrulaması Zorunlu</span>
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-neutral-500 font-medium">Dakikalık İstek Limiti:</span>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={siteCmsConfig.operationalSettings?.qrRateLimitPerMin ?? 20}
+                onChange={(e) =>
+                  onUpdateSiteCmsConfig((prev) => ({
+                    ...prev,
+                    operationalSettings: {
+                      ...prev.operationalSettings,
+                      qrRateLimitPerMin: Math.max(5, Number(e.target.value)),
+                    },
+                  }))
+                }
+                className="w-20 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1 font-mono"
+              />
+            </div>
+          </div>
+
           {/* Üst Özet ve Bölge Filtresi */}
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -4859,43 +5945,29 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
-                {['Tümü', 'Ana Salon', 'Taş Bahçe', 'Bakır Ocakbaşı', 'VIP Aile Salonu'].map(
-                  (area) => (
-                    <button
-                      key={area}
-                      type="button"
-                      onClick={() => setSelectedFloorArea(area)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                        selectedFloorArea === area
-                          ? 'bg-[#B86B35] text-white'
-                          : 'border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-                      }`}
-                    >
-                      {area}
-                    </button>
-                  )
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTableModalMode('create');
-                    setEditingTableId(null);
-                    setTableFormNumber(`Masa ${String(tables.length + 1).padStart(2, '0')}`);
-                    setTableFormArea(
-                      (selectedFloorArea === 'Tümü' ||
-                      !['Ana Salon', 'Taş Bahçe', 'Bakır Ocakbaşı', 'VIP Aile Salonu'].includes(
-                        selectedFloorArea
-                      )
-                        ? 'Ana Salon'
-                        : selectedFloorArea) as DiningTableItem['area']
-                    );
-                    setTableFormCapacity(4);
-                    setTableFormWaiter('Halil Usta');
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-[#B86B35] text-white text-xs font-bold hover:bg-[#9F5928] cursor-pointer inline-flex items-center gap-1 shadow"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Yeni Masa Ekle
-                </button>
+                {Array.from(
+                  new Set([
+                    'Tümü',
+                    'Ana Salon',
+                    'Taş Bahçe',
+                    'Bakır Ocakbaşı',
+                    'VIP Aile Salonu',
+                    ...tables.map((t) => t.area),
+                  ])
+                ).map((area) => (
+                  <button
+                    key={area}
+                    type="button"
+                    onClick={() => setSelectedFloorArea(area)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                      selectedFloorArea === area
+                        ? 'bg-[#B86B35] text-white'
+                        : 'border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                    }`}
+                  >
+                    {area}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -4933,15 +6005,171 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                 </span>
               </div>
 
-              <button
-                type="button"
-                onClick={() => onSwitchWorkspaceView('waiter')}
-                className="px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-[#D4AF6A] text-white dark:text-[#141413] font-bold text-xs cursor-pointer"
-              >
-                Tam Ekran Garson Terminali →
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {onAddTable && (
+                  <button
+                    type="button"
+                    data-testid="add-table-btn"
+                    onClick={() => {
+                      const nextIdx = tables.length + 1;
+                      setEditingTableId(null);
+                      setTblNumber(`Masa ${nextIdx}`);
+                      setTblArea(selectedFloorArea === 'Tümü' ? 'Ana Salon' : selectedFloorArea);
+                      setTblCapacity(4);
+                      setTblWaiterName(staff[0]?.name || 'Murat Demir');
+                      setTblQrCodeNumber(`QR-${String(nextIdx).padStart(2, '0')}`);
+                      setTableFormOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold text-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Yeni Masa Ekle
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onSwitchWorkspaceView('waiter')}
+                  className="px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-[#D4AF6A] text-white dark:text-[#141413] font-bold text-xs cursor-pointer"
+                >
+                  Tam Ekran Garson Terminali →
+                </button>
+              </div>
             </div>
           </div>
+
+          {tableFormOpen && (
+            <div
+              data-testid="table-crud-form"
+              className="rounded-xl border-2 border-[#B86B35]/50 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs shadow-lg"
+            >
+              <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                <h4 className="text-sm font-bold text-neutral-900 dark:text-[#F5F2EB]">
+                  {editingTableId ? 'Masayı Düzenle' : 'Yeni Masa Oluştur'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableFormOpen(false);
+                    setEditingTableId(null);
+                  }}
+                  className="px-2.5 py-1 rounded border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                >
+                  Kapat
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1">Masa Adı / No</label>
+                  <input
+                    type="text"
+                    value={tblNumber}
+                    onChange={(e) => setTblNumber(e.target.value)}
+                    placeholder="Örn: Masa 9 (Teras)"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Salon / Bölge</label>
+                  <input
+                    type="text"
+                    list="oztike-table-areas"
+                    value={tblArea}
+                    onChange={(e) => setTblArea(e.target.value)}
+                    placeholder="Ana Salon"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                  <datalist id="oztike-table-areas">
+                    <option value="Ana Salon" />
+                    <option value="Taş Bahçe" />
+                    <option value="Bakır Ocakbaşı" />
+                    <option value="VIP Aile Salonu" />
+                    <option value="Teras" />
+                  </datalist>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Kişi Kapasitesi</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={tblCapacity}
+                    onChange={(e) => setTblCapacity(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Sorumlu Garson</label>
+                  <input
+                    type="text"
+                    value={tblWaiterName}
+                    onChange={(e) => setTblWaiterName(e.target.value)}
+                    placeholder="Murat Demir"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">QR Masa Kodu</label>
+                  <input
+                    type="text"
+                    value={tblQrCodeNumber}
+                    onChange={(e) => setTblQrCodeNumber(e.target.value)}
+                    placeholder="QR-09"
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableFormOpen(false);
+                    setEditingTableId(null);
+                  }}
+                  className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="button"
+                  data-testid="save-table-btn"
+                  onClick={() => {
+                    if (editingTableId && onUpdateTable) {
+                      const res = onUpdateTable({
+                        id: editingTableId,
+                        number: tblNumber,
+                        area: tblArea,
+                        capacity: tblCapacity,
+                        waiterName: tblWaiterName,
+                        qrCodeNumber: tblQrCodeNumber,
+                      });
+                      setStatusToast(res.message);
+                      if (res.success) {
+                        setTableFormOpen(false);
+                        setEditingTableId(null);
+                      }
+                    } else if (onAddTable) {
+                      const res = onAddTable({
+                        number: tblNumber,
+                        area: tblArea,
+                        capacity: tblCapacity,
+                        waiterName: tblWaiterName,
+                        qrCodeNumber: tblQrCodeNumber,
+                      });
+                      setStatusToast(res.message);
+                      if (res.success) {
+                        setTableFormOpen(false);
+                      }
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{editingTableId ? 'Değişiklikleri Kaydet' : 'Masayı Ekle'}</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Kat Planı Haritası + Seçili Masa Kontrol Paneli */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -5185,52 +6413,37 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                       <button
                         type="button"
                         onClick={() => onSwitchWorkspaceView('pos')}
-                        className="w-full py-2.5 rounded-xl bg-[#B86B35] text-white font-bold text-xs cursor-pointer hover:bg-[#9F5928]"
+                        className="w-full py-2.5 rounded-xl bg-[#B86B35] text-white font-bold text-xs cursor-pointer"
                       >
                         POS Kasada Masa Adisyonunu Aç
                       </button>
-
-                      <div className="grid grid-cols-2 gap-2 pt-1">
+                      {onUpdateTable && (
                         <button
                           type="button"
                           onClick={() => {
-                            setTableModalMode('edit');
                             setEditingTableId(selectedTbl.id);
-                            setTableFormNumber(selectedTbl.number);
-                            setTableFormArea(selectedTbl.area);
-                            setTableFormCapacity(selectedTbl.capacity);
-                            setTableFormWaiter(selectedTbl.waiterName);
+                            setTblNumber(selectedTbl.number);
+                            setTblArea(selectedTbl.area);
+                            setTblCapacity(selectedTbl.capacity);
+                            setTblWaiterName(selectedTbl.waiterName);
+                            setTblQrCodeNumber(selectedTbl.qrCodeNumber);
+                            setTableFormOpen(true);
                           }}
-                          className="py-2 px-2.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-semibold hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer inline-flex items-center justify-center gap-1"
+                          className="w-full inline-flex items-center justify-center gap-1 py-2 rounded-xl border border-[#B86B35]/50 text-[#B86B35] dark:text-[#D4AF6A] font-semibold text-xs cursor-pointer"
                         >
                           <Edit3 className="w-3.5 h-3.5" /> Masayı Düzenle
                         </button>
-
-                        {onResetTableBill && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onResetTableBill(selectedTbl.id);
-                              setStatusToast(`${selectedTbl.number} hesabı sıfırlandı ve masa boşaltıldı.`);
-                            }}
-                            className="py-2 px-2.5 rounded-lg border border-amber-600/50 text-amber-500 hover:bg-amber-950/20 text-xs font-semibold cursor-pointer"
-                            title="Açık adisyonu kapat ve masayı boşalt"
-                          >
-                            Hesabı Sıfırla
-                          </button>
-                        )}
-                      </div>
-
+                      )}
                       {onDeleteTable && (
                         <button
                           type="button"
                           onClick={() => {
-                            onDeleteTable(selectedTbl.id);
-                            setStatusToast(`${selectedTbl.number} masa kaydı silindi.`);
+                            const res = onDeleteTable(selectedTbl.id);
+                            setStatusToast(res.message);
                           }}
-                          className="w-full py-2 rounded-lg border border-rose-500/50 text-rose-500 hover:bg-rose-950/20 text-xs font-semibold cursor-pointer inline-flex items-center justify-center gap-1"
+                          className="w-full py-2 rounded-xl border border-rose-500/45 text-rose-500 hover:bg-rose-500/10 font-semibold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer"
                         >
-                          <Trash2 className="w-3.5 h-3.5" /> Masayı Sistemden Sil
+                          <Trash2 className="w-3.5 h-3.5" /> Masayı Sil
                         </button>
                       )}
                     </div>
@@ -5239,171 +6452,51 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               })()}
             </div>
           </div>
-
-          {/* Masa Ekleme / Düzenleme Modalı */}
-          {tableModalMode && (
-            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1A0C09] p-5 space-y-4 text-xs shadow-2xl">
-                <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
-                  <h4 className="font-bold text-sm text-neutral-900 dark:text-[#F5D69B]">
-                    {tableModalMode === 'create' ? 'Yeni Masa Ekle' : 'Masa Bilgilerini Düzenle'}
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() => setTableModalMode(null)}
-                    className="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block font-semibold mb-1">Masa Adı / No</label>
-                    <input
-                      type="text"
-                      required
-                      value={tableFormNumber}
-                      onChange={(e) => setTableFormNumber(e.target.value)}
-                      placeholder="Örn: Masa 09 veya Bahçe VIP 1"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Restoran Bölgesi</label>
-                    <select
-                      value={tableFormArea}
-                      onChange={(e) => setTableFormArea(e.target.value as DiningTableItem['area'])}
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                    >
-                      <option value="Ana Salon">Ana Salon</option>
-                      <option value="Taş Bahçe">Taş Bahçe</option>
-                      <option value="Bakır Ocakbaşı">Bakır Ocakbaşı</option>
-                      <option value="VIP Aile Salonu">VIP Aile Salonu</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block font-semibold mb-1">Kişi Kapasitesi</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={tableFormCapacity}
-                        onChange={(e) => setTableFormCapacity(Number(e.target.value))}
-                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-semibold mb-1">Sorumlu Garson</label>
-                      <input
-                        type="text"
-                        value={tableFormWaiter}
-                        onChange={(e) => setTableFormWaiter(e.target.value)}
-                        placeholder="Örn: Halil Usta"
-                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                  <button
-                    type="button"
-                    onClick={() => setTableModalMode(null)}
-                    className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold"
-                  >
-                    İptal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!tableFormNumber.trim()) return;
-                      if (tableModalMode === 'create' && onAddTable) {
-                        onAddTable({
-                          number: tableFormNumber.trim(),
-                          area: tableFormArea,
-                          capacity: tableFormCapacity,
-                          waiterName: tableFormWaiter.trim() || 'Halil Usta',
-                          status: 'Boş',
-                          qrCodeNumber: `QR-${tableFormNumber.toUpperCase().replace(/\s+/g, '')}`,
-                          openBalance: 0,
-                          activeServiceRequests: [],
-                          currentOrderId: null,
-                          billRequested: false,
-                          waiterCalled: false,
-                          mergedWith: null,
-                        });
-                        setStatusToast(`${tableFormNumber} masası eklendi.`);
-                      } else if (tableModalMode === 'edit' && onUpdateTable && editingTableId) {
-                        const target = tables.find((t) => t.id === editingTableId);
-                        if (target) {
-                          onUpdateTable({
-                            ...target,
-                            number: tableFormNumber.trim(),
-                            area: tableFormArea,
-                            capacity: tableFormCapacity,
-                            waiterName: tableFormWaiter.trim() || target.waiterName,
-                          });
-                          setStatusToast(`${tableFormNumber} bilgileri güncellendi.`);
-                        }
-                      }
-                      setTableModalMode(null);
-                    }}
-                    className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-                  >
-                    Kaydet
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Modül 4: QR Menü Önizleme & Masa QR Token Ayarları */}
-      {activeModuleId === 4 && (
+      {/* Modül 7: Mutfak (KDS) Ayarları & Canlı Ekran (Varsayılan Pasif / İsteğe Bağlı Aktif) */}
+      {activeModuleId === 7 && (
         <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold flex items-center gap-2">
-                <QrCode className="w-4 h-4 text-[#B86B35]" />
-                <span>4. QR Menü Yapılandırması &amp; Masa Bağlantıları</span>
-              </h3>
-              <p className="text-neutral-500">Masa QR doğrulama politikası ve müşteri QR portalı önizlemesini yönetin.</p>
+              <div className="font-bold text-sm flex items-center gap-2">
+                <Power className="w-4 h-4 text-[#B86B35]" />
+                <span>
+                  Mutfak (KDS) Modülü Durumu:{' '}
+                  <strong className={siteCmsConfig.operationalSettings?.kitchenModuleEnabled ? 'text-emerald-500' : 'text-amber-500'}>
+                    {siteCmsConfig.operationalSettings?.kitchenModuleEnabled ? 'Aktif' : 'Pasif'}
+                  </strong>
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-500 mt-0.5">
+                Mutfak ekranı varsayılan olarak pasiftir. İstediğiniz zaman buradan tek tıkla aktifleştirip tam ekran KDS kullanabilirsiniz.
+              </p>
             </div>
             <button
               type="button"
-              onClick={() => onSwitchWorkspaceView('qr_web')}
-              className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+              data-testid="kds-module-master-toggle"
+              onClick={() => {
+                const next = !(siteCmsConfig.operationalSettings?.kitchenModuleEnabled ?? false);
+                onUpdateSiteCmsConfig((prev) => ({
+                  ...prev,
+                  operationalSettings: {
+                    ...prev.operationalSettings,
+                    kitchenModuleEnabled: next,
+                  },
+                }));
+                setStatusToast(`Mutfak (KDS) modülü ${next ? 'aktifleştirildi' : 'pasife alındı'}.`);
+              }}
+              className={`px-4 py-2 rounded-lg font-bold cursor-pointer ${
+                siteCmsConfig.operationalSettings?.kitchenModuleEnabled
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-[#B86B35] text-white'
+              }`}
             >
-              Tam Ekran QR Menü Önizlemesine Git →
+              {siteCmsConfig.operationalSettings?.kitchenModuleEnabled ? 'Pasife Al' : 'Mutfak Modülünü Aktifleştir'}
             </button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-[#141413]">
-            <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
-              <input
-                type="checkbox"
-                checked={mod4RequireQrForOrder}
-                onChange={(e) => {
-                  setMod4RequireQrForOrder(e.target.checked);
-                  setStatusToast('QR masa doğrulama politikası güncellendi.');
-                }}
-              />
-              <span>Masa seçimi &amp; Garson Çağrısı için QR kod taraması zorunlu</span>
-            </label>
-            <div className="flex flex-wrap gap-1.5 items-center justify-end">
-              {tables.slice(0, 4).map((t) => (
-                <span key={t.id} className="px-2 py-1 rounded bg-white dark:bg-[#1F1F1D] border border-neutral-300 dark:border-neutral-700 font-mono text-[10px]">
-                  {t.qrCodeNumber} · {t.number}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* Modül 7: Mutfak (KDS) Ayarları & Canlı Ekran */}
-      {activeModuleId === 7 && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-semibold flex items-center gap-2">
@@ -5414,132 +6507,2167 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
             </div>
             <button
               type="button"
+              disabled={!siteCmsConfig.operationalSettings?.kitchenModuleEnabled}
               onClick={() => onSwitchWorkspaceView('kds')}
-              className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+              className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
             >
               Tam Ekran Mutfak (KDS) Ekranına Git →
             </button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-[#141413]">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-[#141413]">
             <div>
               <label className="block font-semibold mb-1">Geciken Sipariş Uyarı Eşiği (Dakika)</label>
               <input
                 type="number"
                 min={5}
-                value={mod7KitchenAlertMins}
+                max={60}
+                value={siteCmsConfig.operationalSettings?.kdsAlertMinutes ?? 14}
                 onChange={(e) => {
-                  setMod7KitchenAlertMins(Number(e.target.value));
-                  setStatusToast(`Mutfak KDS uyarı süresi ${e.target.value} dk olarak kaydedildi.`);
+                  const val = Math.max(5, Number(e.target.value));
+                  onUpdateSiteCmsConfig((prev) => ({
+                    ...prev,
+                    operationalSettings: {
+                      ...prev.operationalSettings,
+                      kdsAlertMinutes: val,
+                    },
+                  }));
+                  setStatusToast(`Mutfak KDS uyarı süresi ${val} dk olarak kaydedildi.`);
                 }}
                 className="w-40 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {(['Izgara', 'Tavuk', 'Soğuk mutfak', 'İçecek', 'Paketleme'] as const).map((st) => (
-                <span key={st} className="px-2.5 py-1 rounded-full bg-emerald-600/15 border border-emerald-500/40 text-emerald-600 dark:text-emerald-300 font-semibold">
-                  {st}: Aktif
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modül 12: POS / Kasa Ayarları & Fiş Çıktısı */}
-      {activeModuleId === 12 && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 text-xs">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-[#B86B35]" />
-                <span>10. POS / Kasa Terminali &amp; Termal Yazıcı Ayarları</span>
-              </h3>
-              <p className="text-neutral-500">Varsayılan ödeme yöntemi ve otomatik fiş/fatura yazdırma ayarlarını yapılandırın.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onSwitchWorkspaceView('pos')}
-              className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
-            >
-              Tam Ekran POS / Kasa Ekranına Git →
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-[#141413]">
-            <div>
-              <label className="block font-semibold mb-1">Varsayılan POS Tahsilat Yöntemi</label>
-              <select
-                value={mod12DefaultPosMethod}
-                onChange={(e) => {
-                  setMod12DefaultPosMethod(e.target.value as 'Nakit' | 'Kredi Kartı (POS)' | 'Yemek Kartı');
-                  setStatusToast(`POS varsayılan ödeme yöntemi ${e.target.value} olarak ayarlandı.`);
-                }}
-                className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
-              >
-                <option value="Kredi Kartı (POS)">Kredi Kartı (POS)</option>
-                <option value="Nakit">Nakit</option>
-                <option value="Yemek Kartı">Yemek Kartı</option>
-              </select>
-            </div>
-            <label className="inline-flex items-center gap-2 font-medium cursor-pointer self-end pb-1">
+            <label className="inline-flex items-center gap-2 font-medium cursor-pointer self-center">
               <input
                 type="checkbox"
-                checked={mod12AutoReceiptPrint}
-                onChange={(e) => {
-                  setMod12AutoReceiptPrint(e.target.checked);
-                  setStatusToast('Otomatik fiş / e-Arşiv çıktı kuralı güncellendi.');
-                }}
+                checked={siteCmsConfig.operationalSettings?.kdsSoundAlert ?? true}
+                onChange={(e) =>
+                  onUpdateSiteCmsConfig((prev) => ({
+                    ...prev,
+                    operationalSettings: {
+                      ...prev.operationalSettings,
+                      kdsSoundAlert: e.target.checked,
+                    },
+                  }))
+                }
               />
-              <span>Tahsilat tamamlandığında otomatik termal fiş ve e-Fatura oluştur</span>
+              <span>Yeni Sipariş Sesli Uyarı Sinyali</span>
             </label>
+            <label className="inline-flex items-center gap-2 font-medium cursor-pointer self-center">
+              <input
+                type="checkbox"
+                checked={siteCmsConfig.operationalSettings?.kdsAutoBumpCompleted ?? false}
+                onChange={(e) =>
+                  onUpdateSiteCmsConfig((prev) => ({
+                    ...prev,
+                    operationalSettings: {
+                      ...prev.operationalSettings,
+                      kdsAutoBumpCompleted: e.target.checked,
+                    },
+                  }))
+                }
+              />
+              <span>Hazır Siparişleri Otomatik Kapat</span>
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {(['Izgara', 'Tavuk', 'Soğuk mutfak', 'İçecek', 'Paketleme'] as const).map((st) => {
+              const activeStations = siteCmsConfig.operationalSettings?.kdsActiveStations || [
+                'Izgara',
+                'Tavuk',
+                'Soğuk mutfak',
+                'İçecek',
+                'Paketleme',
+              ];
+              const isStationActive = activeStations.includes(st);
+              return (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => {
+                    const next = isStationActive
+                      ? activeStations.filter((x) => x !== st)
+                      : [...activeStations, st];
+                    onUpdateSiteCmsConfig((prev) => ({
+                      ...prev,
+                      operationalSettings: {
+                        ...prev.operationalSettings,
+                        kdsActiveStations: next,
+                      },
+                    }));
+                    setStatusToast(`${st} istasyonu ${isStationActive ? 'kapatıldı' : 'aktifleştirildi'}.`);
+                  }}
+                  className={`px-3 py-1.5 rounded-full font-semibold border cursor-pointer ${
+                    isStationActive
+                      ? 'bg-emerald-600/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-300'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-500'
+                  }`}
+                >
+                  {st}: {isStationActive ? 'Aktif' : 'Kapalı'}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
+      {/* Modül 12: ÖDEME YÖNTEMLERİ, POS, KASA & FİŞ (TEK BAŞLIK ALTINDA) */}
+      {activeModuleId === 12 && (
+        <div className="space-y-6 text-xs">
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-[#B86B35]" />
+                  <span>10. Ödeme Yöntemleri, POS, Kasa &amp; Fiş Yönetimi</span>
+                </h3>
+                <p className="text-neutral-500">
+                  POS kasa ayarları, müşteri ödeme yöntemleri (Nakit, Kart, Online, Yemek Kartı, Havale), adisyon tahsilatı ve termal fiş tasarımını tek merkezden yönetin.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSwitchWorkspaceView('pos')}
+                className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+              >
+                Tam Ekran POS / Kasa Ekranına Git →
+              </button>
+            </div>
+
+            {/* 4 Alt Sekme: POS & Kasa | Ödeme Yöntemleri | Tahsilat & e-Fatura | Fiş Tasarımı */}
+            <div className="flex flex-wrap gap-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              {(
+                [
+                  { id: 'pos', label: 'POS & Kasa Ayarları' },
+                  { id: 'payment_methods', label: `Ödeme Yöntemleri (${(siteCmsConfig.paymentMethods || []).length})` },
+                  { id: 'settlement', label: `Tahsilat & e-Fatura (${orders.length})` },
+                  { id: 'receipt', label: 'Fiş Tasarımı & Yazıcı' },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  data-testid={`pos-subtab-${tab.id}`}
+                  onClick={() => setPosModuleTab(tab.id)}
+                  className={`px-3.5 py-2 rounded-lg font-bold cursor-pointer transition ${
+                    posModuleTab === tab.id
+                      ? 'bg-[#B86B35] text-white'
+                      : 'bg-neutral-100 dark:bg-[#141413] text-neutral-600 dark:text-neutral-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {posModuleTab === 'pos' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-[#141413]">
+                <div>
+                  <label className="block font-semibold mb-1">Varsayılan POS Tahsilat Yöntemi</label>
+                  <select
+                    value={siteCmsConfig.operationalSettings?.posDefaultMethod || 'card'}
+                    onChange={(e) => {
+                      const method = e.target.value as 'cash' | 'card' | 'meal_card';
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        operationalSettings: {
+                          ...prev.operationalSettings,
+                          posDefaultMethod: method,
+                        },
+                      }));
+                      setStatusToast('POS varsayılan ödeme yöntemi güncellendi.');
+                    }}
+                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                  >
+                    <option value="card">Fiziksel POS / Kredi Kartı</option>
+                    <option value="cash">Nakit</option>
+                    <option value="meal_card">Yemek Kartı</option>
+                  </select>
+                </div>
+                <label className="inline-flex items-center gap-2 font-medium cursor-pointer self-end pb-1">
+                  <input
+                    type="checkbox"
+                    checked={siteCmsConfig.operationalSettings?.posAutoReceiptPrint ?? true}
+                    onChange={(e) => {
+                      onUpdateSiteCmsConfig((prev) => ({
+                        ...prev,
+                        operationalSettings: {
+                          ...prev.operationalSettings,
+                          posAutoReceiptPrint: e.target.checked,
+                        },
+                      }));
+                      setStatusToast('Otomatik fiş / e-Arşiv çıktı kuralı güncellendi.');
+                    }}
+                  />
+                  <span>Tahsilat tamamlandığında otomatik termal fiş ve e-Fatura oluştur</span>
+                </label>
+              </div>
+            )}
+
+            {posModuleTab === 'payment_methods' && (() => {
+              const methods = siteCmsConfig.paymentMethods || [];
+              const updateMethods = (next: NonNullable<SiteCmsConfig['paymentMethods']>) =>
+                onUpdateSiteCmsConfig((prev) => ({ ...prev, paymentMethods: next }));
+              return (
+                <div className="space-y-4">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!pmName.trim()) return;
+                      if (editingPmId) {
+                        updateMethods(
+                          methods.map((m) =>
+                            m.id === editingPmId
+                              ? {
+                                  ...m,
+                                  name: pmName.trim(),
+                                  code: pmCode.trim() || m.code,
+                                  type: pmType,
+                                  commissionPercent: pmCommission,
+                                  allowOnCustomerPortal: pmAllowPortal,
+                                  allowPayNow: pmAllowPayNow,
+                                  description: pmDescription.trim(),
+                                }
+                              : m
+                          )
+                        );
+                        setStatusToast(`${pmName.trim()} ödeme yöntemi güncellendi.`);
+                        setEditingPmId(null);
+                      } else {
+                        updateMethods([
+                          ...methods,
+                          {
+                            id: `PM-${Date.now().toString().slice(-4)}`,
+                            name: pmName.trim(),
+                            code: pmCode.trim() || pmType,
+                            type: pmType,
+                            commissionPercent: pmCommission,
+                            isActive: true,
+                            allowOnCustomerPortal: pmAllowPortal,
+                            allowPayNow: pmAllowPayNow,
+                            description: pmDescription.trim() || 'Özel ödeme kanalı',
+                          },
+                        ]);
+                        setStatusToast(`${pmName.trim()} ödeme yöntemi eklendi.`);
+                      }
+                      setPmName('');
+                      setPmCode('');
+                      setPmDescription('');
+                    }}
+                    className="rounded-xl border border-[#B86B35]/35 bg-neutral-50 dark:bg-[#141413] p-4 space-y-3"
+                  >
+                    <div className="font-bold text-sm flex items-center gap-2">
+                      <Wallet className="w-4 h-4 text-[#B86B35]" />
+                      <span>{editingPmId ? 'Ödeme Yöntemini Düzenle' : 'Yeni Ödeme Yöntemi Ekle'}</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Yöntem Adı *</label>
+                        <input
+                          type="text"
+                          required
+                          value={pmName}
+                          onChange={(e) => setPmName(e.target.value)}
+                          placeholder="Örn: Setcard / Troy QR"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Sistem Kodu</label>
+                        <input
+                          type="text"
+                          value={pmCode}
+                          onChange={(e) => setPmCode(e.target.value)}
+                          placeholder="setcard_qr"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Ödeme Türü</label>
+                        <select
+                          value={pmType}
+                          onChange={(e) => setPmType(e.target.value as typeof pmType)}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        >
+                          <option value="cash">Nakit</option>
+                          <option value="pos">Fiziksel POS Kart</option>
+                          <option value="online_card">Online Kart (iyzico/PayTR)</option>
+                          <option value="meal_card">Yemek Kartı</option>
+                          <option value="wallet">Dijital Cüzdan</option>
+                          <option value="transfer">Havale / FAST QR</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Komisyon (%)</label>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min={0}
+                          value={pmCommission}
+                          onChange={(e) => setPmCommission(Number(e.target.value))}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açıklama</label>
+                        <input
+                          type="text"
+                          value={pmDescription}
+                          onChange={(e) => setPmDescription(e.target.value)}
+                          placeholder="Kısa bilgi..."
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap gap-4">
+                        <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                          <input
+                            type="checkbox"
+                            checked={pmAllowPortal}
+                            onChange={(e) => setPmAllowPortal(e.target.checked)}
+                          />
+                          <span>Müşteri Sipariş Sepetinde Göster</span>
+                        </label>
+                        <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                          <input
+                            type="checkbox"
+                            checked={pmAllowPayNow}
+                            onChange={(e) => setPmAllowPayNow(e.target.checked)}
+                          />
+                          <span>Anında Online Ödeme (Pay Now) Destekli</span>
+                        </label>
+                      </div>
+                      <button
+                        type="submit"
+                        className="px-4 py-1.5 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                      >
+                        {editingPmId ? 'Güncelle' : '+ Ödeme Yöntemi Ekle'}
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] px-3.5 py-2.5">
+                    <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-300">
+                      Sipariş Aşamasında Görünürlük ({methods.filter((m) => m.isActive && m.allowOnCustomerPortal).length}/{methods.length} yöntem müşteri ekranında açık)
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateMethods(
+                            methods.map((m) => ({
+                              ...m,
+                              isActive: true,
+                              allowOnCustomerPortal: ['cash', 'pos', 'transfer'].includes(m.type),
+                            }))
+                          );
+                          setStatusToast('Sipariş aşamasında Kasa Nakit, POS Cihazı ve Havale/EFT aktif edildi.');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-[#B86B35]/15 border border-[#B86B35]/40 text-[#B86B35] dark:text-[#D4AF6A] font-bold text-[11px] cursor-pointer"
+                      >
+                        Varsayılan (Kasa / POS / Havale-EFT)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateMethods(methods.map((m) => ({ ...m, isActive: true, allowOnCustomerPortal: true })));
+                          setStatusToast('Tüm ödeme yöntemleri sipariş aşamasında açıldı.');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600/15 border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] cursor-pointer"
+                      >
+                        Tümünü Siparişte Aç
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {methods.map((pm) => (
+                      <div
+                        key={pm.id}
+                        data-testid={`admin-pm-card-${pm.id}`}
+                        className={`rounded-xl border p-4 space-y-2.5 ${
+                          pm.isActive
+                            ? 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-[#141413]'
+                            : 'border-neutral-300/60 dark:border-neutral-800/60 opacity-65'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-sm truncate">{pm.name}</span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              data-testid={`toggle-pm-portal-${pm.id}`}
+                              onClick={() => {
+                                const nextPortal = !pm.allowOnCustomerPortal;
+                                updateMethods(
+                                  methods.map((x) =>
+                                    x.id === pm.id ? { ...x, allowOnCustomerPortal: nextPortal } : x
+                                  )
+                                );
+                                setStatusToast(
+                                  `${pm.name} sipariş aşamasında ${nextPortal ? 'açıldı' : 'gizlendi'}.`
+                                );
+                              }}
+                              className={`px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer ${
+                                pm.allowOnCustomerPortal
+                                  ? 'bg-[#B86B35] text-white'
+                                  : 'bg-neutral-300 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-200'
+                              }`}
+                            >
+                              {pm.allowOnCustomerPortal ? 'Siparişte Açık' : 'Siparişte Kapalı'}
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`toggle-pm-active-${pm.id}`}
+                              onClick={() =>
+                                updateMethods(
+                                  methods.map((x) => (x.id === pm.id ? { ...x, isActive: !x.isActive } : x))
+                                )
+                              }
+                              className={`px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer ${
+                                pm.isActive ? 'bg-emerald-600 text-white' : 'bg-neutral-500 text-white'
+                              }`}
+                            >
+                              {pm.isActive ? 'Aktif' : 'Pasif'}
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-neutral-500">{pm.description}</p>
+                        <div className="text-[11px] font-mono text-neutral-500">
+                          Tür: {pm.type} · Komisyon: %{pm.commissionPercent} ·{' '}
+                          {pm.allowPayNow ? 'Anında Online Ödeme' : 'Teslimat/Kasa Tahsilatı'}
+                        </div>
+                        <div className="flex items-center gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPmId(pm.id);
+                              setPmName(pm.name);
+                              setPmCode(pm.code);
+                              setPmType(pm.type);
+                              setPmCommission(pm.commissionPercent);
+                              setPmAllowPortal(pm.allowOnCustomerPortal);
+                              setPmAllowPayNow(pm.allowPayNow);
+                              setPmDescription(pm.description);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#B86B35]/45 text-[#B86B35] dark:text-[#D4AF6A] font-semibold cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3" /> Düzenle
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateMethods(methods.filter((x) => x.id !== pm.id))}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-rose-500/40 text-rose-500 font-semibold cursor-pointer ml-auto"
+                          >
+                            <Trash2 className="w-3 h-3" /> Sil
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {posModuleTab === 'settlement' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {orders.map((ord) => (
+                  <div
+                    key={ord.id}
+                    className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 flex flex-col justify-between gap-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-[#B86B35] dark:text-[#D4AF6A]">
+                        {ord.orderNumber}
+                      </span>
+                      <span className="font-mono font-bold">{ord.totalAmount.toFixed(2)} ₺</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500">
+                      {ord.paymentMethod} · {ord.paymentStatus}
+                      {ord.receiptNumber ? ` · ${ord.receiptNumber}` : ''}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {ord.paymentStatus !== 'Ödendi' && onSettleOrderPayment && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const rem = Math.max(0, ord.totalAmount - ord.paidAmount);
+                            onSettleOrderPayment(ord.id, rem, ord.paymentMethod || 'POS Kredi Kartı');
+                            setStatusToast(`${ord.orderNumber} tahsil edildi & fiş kesildi.`);
+                          }}
+                          className="px-2 py-1 rounded bg-emerald-700 text-white font-semibold text-[11px] cursor-pointer"
+                        >
+                          Tahsil Et
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        data-testid={`module12-print-btn-${ord.orderNumber}`}
+                        onClick={() => {
+                          onIssueOrderReceiptAndInvoice?.(ord.id);
+                          const nums =
+                            ord.receiptNumber && ord.eInvoiceNo
+                              ? { receiptNumber: ord.receiptNumber, eInvoiceNo: ord.eInvoiceNo }
+                              : generateReceiptAndInvoiceNumbers(ord.orderNumber);
+                          const enrichedOrder: OrderRecord = {
+                            ...ord,
+                            receiptNumber: nums.receiptNumber,
+                            eInvoiceNo: nums.eInvoiceNo,
+                            autoReceiptIssued: true,
+                          };
+                          setReceiptInvoiceModalOrder(enrichedOrder);
+                          printThermalReceipt(enrichedOrder, {
+                            ...siteCmsConfig.receiptSettings,
+                            taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                            logoUrl: siteCmsConfig.header.logoUrl,
+                          });
+                          setStatusToast(
+                            `${ord.orderNumber} fişi (${nums.receiptNumber}) termal yazıcıya gönderildi.`
+                          );
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-[11px] font-semibold cursor-pointer"
+                      >
+                        <Printer className="w-3 h-3" /> Fiş / Fatura Yazdır
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Termal Fiş & e-Arşiv Belge Tasarım Stüdyosu + Test Yazdır */}
+          {(posModuleTab === 'pos' || posModuleTab === 'receipt') && (() => {
+            const rs = siteCmsConfig.receiptSettings;
+            const updateReceipt = (patch: Partial<SiteCmsConfig['receiptSettings']>) =>
+              onUpdateSiteCmsConfig((prev) => ({
+                ...prev,
+                receiptSettings: { ...prev.receiptSettings, ...patch },
+              }));
+            const sampleOrder: OrderRecord = orders[0] || {
+              id: 'TEST-1',
+              orderNumber: 'OZT-TEST-001',
+              channel: 'Kasa',
+              tableId: 'TBL-01',
+              tableName: 'Salon 1',
+              staffName: 'Murat Demir',
+              customerName: 'Örnek Misafir',
+              customerPhone: '0532 000 00 00',
+              items: [
+                {
+                  id: 'IT-1',
+                  productId: 'PRD-01',
+                  productName: 'Geleneksel Ciğer Şiş',
+                  quantity: 2,
+                  unitPrice: 440,
+                  station: 'Izgara',
+                  isReady: true,
+                },
+                {
+                  id: 'IT-2',
+                  productId: 'PRD-06',
+                  productName: 'Bakır Köpüklü Ayran',
+                  quantity: 2,
+                  unitPrice: 55,
+                  station: 'İçecek',
+                  isReady: true,
+                },
+              ],
+              subtotal: 990,
+              discountAmount: 0,
+              taxAmount: 99,
+              totalAmount: 990,
+              paidAmount: 990,
+              paymentStatus: 'Ödendi',
+              paymentMethod: 'Kredi Kartı (POS)',
+              status: 'Tamamlandı',
+              createdAt: '16 Kas 2026 14:30',
+              elapsedMinutes: 10,
+              slaMinutes: 14,
+              receiptNumber: 'FIS-2026-0001',
+              eInvoiceNo: 'OZT2026000001',
+              autoReceiptIssued: true,
+            };
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                    <div>
+                      <h4 className="font-bold text-sm flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-[#B86B35]" />
+                        <span>Gelişmiş Fiş &amp; e-Arşiv Fatura Tasarım Bölümü</span>
+                      </h4>
+                      <p className="text-[11px] text-neutral-500">
+                        Şablon stili, renk, yazı tipi, QR kod, barkod, KDV matrah tablosu ve misafir Wi-Fi kutusunu özelleştirin.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        data-testid="admin-test-print-btn"
+                        onClick={() => {
+                          setReceiptInvoiceModalOrder(sampleOrder);
+                          const ok = printThermalReceipt(sampleOrder, {
+                            ...rs,
+                            taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                            logoUrl: siteCmsConfig.header.logoUrl,
+                          });
+                          setStatusToast(
+                            ok
+                              ? 'Test fişi termal yazıcıya gönderildi ve önizleme açıldı.'
+                              : 'Test fişi önizlemesi açıldı.'
+                          );
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Test Fişi Yazdır
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          downloadThermalReceiptHtml(sampleOrder, {
+                            ...rs,
+                            taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                            logoUrl: siteCmsConfig.header.logoUrl,
+                          });
+                          setStatusToast('Örnek termal fiş .HTML olarak indirildi.');
+                        }}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Örnek İndir
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4 Hazır Fiş Tasarım Şablonu */}
+                  <div className="space-y-1.5">
+                    <label className="block font-semibold">Hazır Fiş Tasarım Şablonu Seçin</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        {
+                          id: 'gaziantep-heritage' as const,
+                          label: 'Gaziantep Ocakbaşı',
+                          accent: '#B86B35',
+                          font: 'mono' as const,
+                          border: 'dashed' as const,
+                        },
+                        {
+                          id: 'classic-thermal' as const,
+                          label: 'Klasik Termal POS',
+                          accent: '#141413',
+                          font: 'mono' as const,
+                          border: 'dashed' as const,
+                        },
+                        {
+                          id: 'modern-minimal' as const,
+                          label: 'Modern Minimal',
+                          accent: '#0F766E',
+                          font: 'sans' as const,
+                          border: 'solid' as const,
+                        },
+                        {
+                          id: 'kurumsal-efatura' as const,
+                          label: 'Kurumsal e-Arşiv',
+                          accent: '#1E3A8A',
+                          font: 'serif' as const,
+                          border: 'double' as const,
+                        },
+                      ].map((tpl) => (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          data-testid={`receipt-preset-${tpl.id}`}
+                          onClick={() =>
+                            updateReceipt({
+                              templatePreset: tpl.id,
+                              accentColor: tpl.accent,
+                              fontFamily: tpl.font,
+                              borderStyle: tpl.border,
+                            })
+                          }
+                          className={`p-2.5 rounded-xl border text-left cursor-pointer transition ${
+                            (rs.templatePreset || 'gaziantep-heritage') === tpl.id
+                              ? 'border-[#B86B35] bg-[#B86B35]/15 ring-1 ring-[#B86B35]'
+                              : 'border-neutral-200 dark:border-neutral-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="w-3 h-3 rounded-full shrink-0"
+                              style={{ backgroundColor: tpl.accent }}
+                            />
+                            <span className="font-bold text-[11px]">{tpl.label}</span>
+                          </div>
+                          <div className="text-[10px] text-neutral-500 mt-0.5 font-mono">
+                            {tpl.font} · {tpl.border}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Görsel Stil, Renk, Font ve Kağıt Boyutu */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block font-semibold mb-1">Kağıt Genişliği</label>
+                      <select
+                        value={rs?.paperWidthMm || 80}
+                        onChange={(e) =>
+                          updateReceipt({ paperWidthMm: Number(e.target.value) === 58 ? 58 : 80 })
+                        }
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      >
+                        <option value={80}>80mm Standart</option>
+                        <option value={58}>58mm Mobil Rulo</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Yazı Tipi</label>
+                      <select
+                        value={rs?.fontFamily || 'mono'}
+                        onChange={(e) =>
+                          updateReceipt({
+                            fontFamily: e.target.value as 'mono' | 'sans' | 'serif',
+                          })
+                        }
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      >
+                        <option value="mono">Termal Mono</option>
+                        <option value="sans">Modern Sans</option>
+                        <option value="serif">Klasik Serif</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Ayraç Çizgi Stili</label>
+                      <select
+                        value={rs?.borderStyle || 'dashed'}
+                        onChange={(e) =>
+                          updateReceipt({
+                            borderStyle: e.target.value as 'dashed' | 'solid' | 'double',
+                          })
+                        }
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5"
+                      >
+                        <option value="dashed">Kesikli (Dashed)</option>
+                        <option value="solid">Düz Çizgi (Solid)</option>
+                        <option value="double">Çift Çizgi (Double)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Fiş Vurgu Rengi</label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="color"
+                          value={rs?.accentColor || '#B86B35'}
+                          onChange={(e) => updateReceipt({ accentColor: e.target.value })}
+                          className="h-8 w-9 rounded border border-neutral-300 cursor-pointer"
+                        />
+                        <input
+                          type="text"
+                          value={rs?.accentColor || '#B86B35'}
+                          onChange={(e) => updateReceipt({ accentColor: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1.5 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Kurumsal Bilgiler & Wi-Fi / QR Ayarları */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-semibold mb-1">İşletme Başlık Adı</label>
+                      <input
+                        type="text"
+                        value={rs?.companyName || ''}
+                        onChange={(e) => updateReceipt({ companyName: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Resmi Ticari Unvan</label>
+                      <input
+                        type="text"
+                        value={rs?.legalName || ''}
+                        onChange={(e) => updateReceipt({ legalName: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Vergi Dairesi &amp; VKN</label>
+                      <input
+                        type="text"
+                        value={rs?.taxOfficeAndNo || ''}
+                        onChange={(e) => updateReceipt({ taxOfficeAndNo: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Telefon</label>
+                      <input
+                        type="text"
+                        value={rs?.phone || ''}
+                        onChange={(e) => updateReceipt({ phone: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Misafir Wi-Fi Ağ Adı (SSID)</label>
+                      <input
+                        type="text"
+                        value={rs?.wifiSsid || ''}
+                        onChange={(e) => updateReceipt({ wifiSsid: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Misafir Wi-Fi Şifresi</label>
+                      <input
+                        type="text"
+                        value={rs?.wifiPassword || ''}
+                        onChange={(e) => updateReceipt({ wifiPassword: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">QR Kod Yönlendirme URL</label>
+                      <input
+                        type="text"
+                        value={rs?.qrCodeUrl || ''}
+                        onChange={(e) => updateReceipt({ qrCodeUrl: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Sosyal Medya &amp; Web İmzası</label>
+                      <input
+                        type="text"
+                        value={rs?.socialHandle || ''}
+                        onChange={(e) => updateReceipt({ socialHandle: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Mühür Başlığı</label>
+                      <input
+                        type="text"
+                        value={rs?.stampTitle || ''}
+                        onChange={(e) => updateReceipt({ stampTitle: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Mühür Alt Yazısı</label>
+                      <input
+                        type="text"
+                        value={rs?.stampSubtitle || ''}
+                        onChange={(e) => updateReceipt({ stampSubtitle: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block font-semibold mb-1">Fiş Alt Bilgi Mesajı</label>
+                      <input
+                        type="text"
+                        value={rs?.footerMessage || ''}
+                        onChange={(e) => updateReceipt({ footerMessage: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Fiş Üzerinde Gösterilecek Görsel Bileşenler */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rs?.showLogo ?? true}
+                        onChange={(e) => updateReceipt({ showLogo: e.target.checked })}
+                      />
+                      <span>Fiş Üstünde İşletme Logosu Göster</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rs?.showTaxBreakdown ?? true}
+                        onChange={(e) => updateReceipt({ showTaxBreakdown: e.target.checked })}
+                      />
+                      <span>KDV Matrah &amp; Vergi Kırılım Tablosu</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rs?.showQrCode ?? true}
+                        onChange={(e) => updateReceipt({ showQrCode: e.target.checked })}
+                      />
+                      <span>e-Arşiv Doğrulama &amp; Menü QR Kodu</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rs?.showBarcode ?? true}
+                        onChange={(e) => updateReceipt({ showBarcode: e.target.checked })}
+                      />
+                      <span>Adisyon Barkodu (EAN-13 Çizgili)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rs?.showWifiInfo ?? true}
+                        onChange={(e) => updateReceipt({ showWifiInfo: e.target.checked })}
+                      />
+                      <span>Misafir Wi-Fi Şifre Kutusunu Bas</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rs?.showStampBox ?? true}
+                        onChange={(e) => updateReceipt({ showStampBox: e.target.checked })}
+                      />
+                      <span>Resmi Onay / Kaşe Kutusunu Bas</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Canlı Termal Fiş Önizlemesi (Gerçek Şablon Motoru) */}
+                <div className="lg:col-span-5 flex flex-col items-center gap-3">
+                  <div className="text-xs font-bold text-neutral-500">
+                    Canlı Termal Rulo Önizlemesi ({rs?.paperWidthMm || 80}mm)
+                  </div>
+                  <div
+                    data-testid="admin-receipt-designer-preview"
+                    className={`${
+                      rs?.paperWidthMm === 58 ? 'w-[265px]' : 'w-[355px]'
+                    } rounded-2xl border border-neutral-300 bg-[#FFFDF9] text-[#141413] p-5 shadow-xl`}
+                    dangerouslySetInnerHTML={{
+                      __html: buildThermalReceiptInnerMarkup(sampleOrder, {
+                        ...rs,
+                        taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                        logoUrl: siteCmsConfig.header.logoUrl,
+                      }),
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* =====================================================================
-          MODÜL 40: GEÇMİŞ & GÜN SONU ARŞİVİ
+          MODÜL 40: GEÇMİŞ & GÜN SONU Z-RAPORU ARŞİVİ
       ===================================================================== */}
       {activeModuleId === 40 && (
-        <AdminArchiveManager
-          orders={orders}
-          waiterCalls={waiterCalls}
-          tables={tables}
-          onDeleteOrder={onDeleteOrder}
-          onDeleteWaiterCall={onDeleteWaiterCall}
-          onNotify={(msg) => setStatusToast(msg)}
-        />
+        <div className="space-y-6 text-xs">
+          {(() => {
+            const validOrders = orders.filter((o) => o.status !== 'İptal edildi');
+            const liveTotal = roundCurrency(validOrders.reduce((s, o) => s + o.totalAmount, 0));
+            const liveTax = roundCurrency(validOrders.reduce((s, o) => s + o.taxAmount, 0));
+            const liveCash = roundCurrency(
+              validOrders
+                .filter((o) => /nakit/i.test(o.paymentMethod || ''))
+                .reduce((s, o) => s + o.totalAmount, 0)
+            );
+            const liveCard = roundCurrency(liveTotal - liveCash);
+
+            const filteredArchive = archiveHistory.filter((a) => {
+              const typeMatch = archiveTypeFilter === 'Tümü' || a.type === archiveTypeFilter;
+              const qMatch =
+                !archiveSearch.trim() ||
+                a.title.toLowerCase().includes(archiveSearch.toLowerCase()) ||
+                a.subtitle.toLowerCase().includes(archiveSearch.toLowerCase()) ||
+                a.reason.toLowerCase().includes(archiveSearch.toLowerCase());
+              return typeMatch && qMatch;
+            });
+
+            return (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Bugünkü Canlı Ciro</div>
+                    <div className="text-xl font-mono font-bold mt-1 text-[#B86B35] dark:text-[#D4AF6A]">
+                      {liveTotal.toFixed(2)} ₺
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Nakit / Kart Dağılımı</div>
+                    <div className="text-sm font-mono font-bold mt-1">
+                      {liveCash.toFixed(0)} ₺ / {liveCard.toFixed(0)} ₺
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Toplam KDV &amp; Sipariş</div>
+                    <div className="text-sm font-mono font-bold mt-1">
+                      {liveTax.toFixed(2)} ₺ ({validOrders.length} Adet)
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Arşivlenmiş Z-Raporu</div>
+                    <div className="text-xl font-mono font-bold mt-1">{archiveHistory.length} Kayıt</div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold flex items-center gap-2">
+                        <Archive className="w-4 h-4 text-[#B86B35]" />
+                        <span>Gün Sonu Z-Raporu Arşivleme &amp; Tarihçe</span>
+                      </h3>
+                      <p className="text-neutral-500">
+                        Aktif ciro ve sipariş özetini gün sonu Z-Raporu olarak kalıcı arşive kaydedin veya JSON dışa aktarın.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const blob = new Blob([JSON.stringify(archiveHistory, null, 2)], {
+                          type: 'application/json',
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `oztike-arsiv-${new Date().toISOString().slice(0, 10)}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        setStatusToast('Arşiv geçmişi JSON olarak dışa aktarıldı.');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" /> JSON Dışa Aktar
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={archiveReason}
+                      onChange={(e) => setArchiveReason(e.target.value)}
+                      placeholder="Kapanış notu (örn: Akşam vardiyası kasa mutabakatı)..."
+                      className="flex-1 min-w-[220px] rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2"
+                    />
+                    <button
+                      type="button"
+                      data-testid="archive-day-summary-btn"
+                      onClick={() => {
+                        onArchiveDaySummary?.(archiveReason);
+                        setArchiveReason('');
+                        setStatusToast('Gün sonu Z-Raporu arşive kaydedildi.');
+                      }}
+                      className="px-4 py-2 rounded-lg bg-[#B86B35] text-white font-bold cursor-pointer"
+                    >
+                      Gün Sonu Z-Raporu Arşivle
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(['Tümü', 'Gün Sonu Özeti', 'Sipariş', 'Masa & Hesap', 'Garson Çağrısı', 'Kurye Teslimatı'] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setArchiveTypeFilter(t)}
+                          className={`px-2.5 py-1 rounded font-semibold cursor-pointer ${
+                            archiveTypeFilter === t
+                              ? 'bg-[#B86B35] text-white'
+                              : 'border border-neutral-300 dark:border-neutral-700'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="search"
+                        value={archiveSearch}
+                        onChange={(e) => setArchiveSearch(e.target.value)}
+                        placeholder="Arşivde ara..."
+                        className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                      {archiveHistory.length > 0 && onClearArchiveHistory && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClearArchiveHistory();
+                            setStatusToast('Arşiv kayıtları temizlendi.');
+                          }}
+                          className="px-3 py-1.5 rounded-lg border border-rose-500/40 text-rose-500 font-semibold cursor-pointer"
+                        >
+                          Arşivi Temizle
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {filteredArchive.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] p-3.5 flex flex-wrap items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A] font-bold text-[10px]">
+                              {item.type}
+                            </span>
+                            <span className="font-bold text-sm">{item.title}</span>
+                          </div>
+                          <div className="text-neutral-500 mt-1">{item.subtitle}</div>
+                          <div className="text-[11px] text-neutral-400 mt-0.5">
+                            {item.archivedAt} · {item.reason}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {item.amount !== undefined && (
+                            <span className="font-mono font-bold text-sm text-emerald-500">
+                              {item.amount.toFixed(2)} ₺
+                            </span>
+                          )}
+                          {onDeleteArchiveEntry && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteArchiveEntry(item.id)}
+                              className="p-1.5 rounded text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                              aria-label="Arşiv kaydını sil"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {filteredArchive.length === 0 && (
+                      <div className="p-6 text-center text-neutral-500">
+                        Seçili kriterlere uygun arşiv kaydı bulunamadı.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
       )}
 
       {/* =====================================================================
-          MODÜL 41: PWA UYGULAMA YÖNETİMİ
+          MODÜL 41: GELİŞMİŞ PWA UYGULAMA YÖNETİMİ
       ===================================================================== */}
       {activeModuleId === 41 && (
-        <AdminPwaManager
-          pwaSettings={siteCmsConfig.pwaSettings}
-          onUpdatePwaSettings={(updater) =>
-            onUpdateSiteCmsConfig((prev) => ({
-              ...prev,
-              pwaSettings: updater(prev.pwaSettings),
-            }))
-          }
-          onNotify={(msg) => setStatusToast(msg)}
-        />
+        <div className="space-y-6 text-xs">
+          {(() => {
+            const pwa = siteCmsConfig.pwaSettings;
+            const liveManifest = buildDynamicWebManifest(pwa);
+            const updatePwa = (patch: Partial<SiteCmsConfig['pwaSettings']>) =>
+              onUpdateSiteCmsConfig((prev) => ({
+                ...prev,
+                pwaSettings: { ...prev.pwaSettings, ...patch },
+              }));
+
+            return (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">PWA Sistem Durumu</div>
+                    <div className="font-bold text-sm mt-1 text-emerald-500">
+                      {pwa.enabled ? 'Aktif & Yayında' : 'Pasif'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Service Worker Desteği</div>
+                    <div className="font-bold text-sm mt-1">
+                      {pwaHook.hasServiceWorkerSupport ? 'Tarayıcı Destekliyor' : 'Sınırlı Ortam'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Yükleme / Kurulum Durumu</div>
+                    <div className="font-bold text-sm mt-1">
+                      {pwaHook.isInstalled
+                        ? 'Uygulama Kuruldu'
+                        : pwaHook.isInstallable
+                        ? 'Tek Tık Kuruluma Hazır'
+                        : 'Rehber Modu Aktif'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4">
+                    <div className="text-neutral-500">Önbellek Stratejisi</div>
+                    <div className="font-mono font-bold text-sm mt-1 text-[#B86B35] dark:text-[#D4AF6A]">
+                      {pwa.cacheStrategy || 'stale-while-revalidate'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  <div className="lg:col-span-7 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                      <h3 className="text-base font-semibold flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-[#B86B35]" />
+                        <span>PWA Uygulama Stüdyosu (İkon, Açılış Video/Resim, Renk, Kısayollar)</span>
+                      </h3>
+                      <label className="inline-flex items-center gap-2 font-bold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pwa.enabled}
+                          onChange={(e) => updatePwa({ enabled: e.target.checked })}
+                        />
+                        <span>PWA Özelliği Aktif</span>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Uygulama Tam Adı</label>
+                        <input
+                          type="text"
+                          value={pwa.appName}
+                          onChange={(e) => updatePwa({ appName: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <label className="font-semibold">Kısa İsim (Ana Ekran)</label>
+                          <span className="font-mono text-[10px] text-neutral-500">
+                            {pwa.shortName.length}/12
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          maxLength={12}
+                          value={pwa.shortName}
+                          onChange={(e) => updatePwa({ shortName: e.target.value.slice(0, 12) })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Uygulama Kategorisi</label>
+                        <select
+                          value={pwa.appCategory || 'food'}
+                          onChange={(e) => updatePwa({ appCategory: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        >
+                          <option value="food">food (Restoran &amp; Yemek)</option>
+                          <option value="lifestyle">lifestyle (Yaşam Tarzı)</option>
+                          <option value="shopping">shopping (Hızlı Sipariş)</option>
+                          <option value="business">business (İşletme POS)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Durum Çubuğu (iOS Status Bar)</label>
+                        <select
+                          value={pwa.statusBarStyle || 'black-translucent'}
+                          onChange={(e) =>
+                            updatePwa({
+                              statusBarStyle: e.target.value as SiteCmsConfig['pwaSettings']['statusBarStyle'],
+                            })
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        >
+                          <option value="black-translucent">black-translucent (Şeffaf Koyu)</option>
+                          <option value="black">black (Tam Koyu)</option>
+                          <option value="default">default (Sistem)</option>
+                        </select>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block font-semibold mb-1">Uygulama Açıklaması</label>
+                        <input
+                          type="text"
+                          value={pwa.description}
+                          onChange={(e) => updatePwa({ description: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Görünüm Modu (Display)</label>
+                        <select
+                          value={pwa.displayMode}
+                          onChange={(e) =>
+                            updatePwa({
+                              displayMode: e.target.value as SiteCmsConfig['pwaSettings']['displayMode'],
+                            })
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        >
+                          <option value="standalone">Standalone (Tam Uygulama)</option>
+                          <option value="fullscreen">Fullscreen (Tam Ekran)</option>
+                          <option value="minimal-ui">Minimal UI</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Önbellek Stratejisi</label>
+                        <select
+                          value={pwa.cacheStrategy || 'StaleWhileRevalidate'}
+                          onChange={(e) =>
+                            updatePwa({
+                              cacheStrategy: e.target.value as SiteCmsConfig['pwaSettings']['cacheStrategy'],
+                            })
+                          }
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        >
+                          <option value="StaleWhileRevalidate">StaleWhileRevalidate (Hızlı + Güncel)</option>
+                          <option value="NetworkFirst">NetworkFirst (Önce Canlı Ağ)</option>
+                          <option value="CacheFirst">CacheFirst (Maksimum Hız / Çevrimdışı)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Tema Rengi (Status Bar)</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={pwa.themeColor}
+                            onChange={(e) => updatePwa({ themeColor: e.target.value })}
+                            className="h-8 w-10 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={pwa.themeColor}
+                            onChange={(e) => updatePwa({ themeColor: e.target.value })}
+                            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Arka Plan Rengi</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={pwa.backgroundColor}
+                            onChange={(e) => updatePwa({ backgroundColor: e.target.value })}
+                            className="h-8 w-10 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={pwa.backgroundColor}
+                            onChange={(e) => updatePwa({ backgroundColor: e.target.value })}
+                            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Vurgu / İkon Rengi</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={pwa.accentColor || '#D4AF6A'}
+                            onChange={(e) => updatePwa({ accentColor: e.target.value })}
+                            className="h-8 w-10 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={pwa.accentColor || '#D4AF6A'}
+                            onChange={(e) => updatePwa({ accentColor: e.target.value })}
+                            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1.5 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Yazı &amp; Buton Rengi</label>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <input
+                            type="color"
+                            value={pwa.splashTextColor || '#FFF6E9'}
+                            onChange={(e) => updatePwa({ splashTextColor: e.target.value })}
+                            title="Splash Yazı Rengi"
+                            className="h-8 w-full rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                          />
+                          <input
+                            type="color"
+                            value={pwa.buttonColor || '#B86B35'}
+                            onChange={(e) => updatePwa({ buttonColor: e.target.value })}
+                            title="Kurulum Buton Rengi"
+                            className="h-8 w-full rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Başlangıç Yolu (start_url)</label>
+                        <input
+                          type="text"
+                          value={pwa.startUrl || '/'}
+                          onChange={(e) => updatePwa({ startUrl: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Uygulama İkonu URL (veya Dosya)</label>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={pwa.iconUrl}
+                            onChange={(e) => updatePwa({ iconUrl: e.target.value })}
+                            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                          />
+                          <label className="px-2.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer">
+                            Yükle
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="sr-only"
+                              onChange={(e) =>
+                                readMultiImageFiles(e.target.files, (urls) => updatePwa({ iconUrl: urls[0] }))
+                              }
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Maskelenebilir İkon (Maskable 512px)</label>
+                        <input
+                          type="text"
+                          value={pwa.maskableIconUrl || '/pwa-maskable-512x512.png'}
+                          onChange={(e) => updatePwa({ maskableIconUrl: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Görseli (Splash Image URL)</label>
+                        <input
+                          type="text"
+                          value={pwa.splashImageUrl || '/assets/aistudio/crops/hero-ciger.png'}
+                          onChange={(e) => updatePwa({ splashImageUrl: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div className="sm:col-span-2 rounded-xl border border-[#B86B35]/30 bg-neutral-50 dark:bg-[#141413] p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="font-semibold flex items-center gap-1.5">
+                            <Video className="w-3.5 h-3.5 text-[#B86B35]" />
+                            <span>Açılış Ekranı Video URL (MP4 Splash Video)</span>
+                          </label>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => updatePwa({ splashVideoUrl: '/videos/ciger-ocakbasi-promo.mp4' })}
+                              className="px-2 py-0.5 rounded border border-[#B86B35]/40 text-[#B86B35] font-semibold cursor-pointer"
+                            >
+                              Ocakbaşı Video
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updatePwa({ splashVideoUrl: '/videos/doner-lahmacun-promo.mp4' })}
+                              className="px-2 py-0.5 rounded border border-[#B86B35]/40 text-[#B86B35] font-semibold cursor-pointer"
+                            >
+                              Döner Video
+                            </button>
+                            {pwa.splashVideoUrl && (
+                              <button
+                                type="button"
+                                onClick={() => updatePwa({ splashVideoUrl: '' })}
+                                className="px-2 py-0.5 rounded border border-rose-500/40 text-rose-500 font-semibold cursor-pointer"
+                              >
+                                Temizle
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          value={pwa.splashVideoUrl || ''}
+                          onChange={(e) => updatePwa({ splashVideoUrl: e.target.value })}
+                          placeholder="/videos/ciger-ocakbasi-promo.mp4"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Başlığı (Splash Title)</label>
+                        <input
+                          type="text"
+                          value={pwa.splashTitleTr || 'ÖzTike Ciğer Ocakbaşı'}
+                          onChange={(e) => updatePwa({ splashTitleTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Açılış Alt Başlığı</label>
+                        <input
+                          type="text"
+                          value={pwa.splashSubtitleTr || 'Gaziantep Bakır Ocakbaşı & QR Sipariş'}
+                          onChange={(e) => updatePwa({ splashSubtitleTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Push Bildirim Başlığı</label>
+                        <input
+                          type="text"
+                          value={pwa.pushTitleTr || 'ÖzTike Ciğer · Siparişiniz Hazır!'}
+                          onChange={(e) => updatePwa({ pushTitleTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Push Bildirim Mesaj İçeriği</label>
+                        <input
+                          type="text"
+                          value={
+                            pwa.pushBodyTr ||
+                            'Zırh kebabı ve taze kuzu ciğer şiş siparişiniz ocaktan çıktı.'
+                          }
+                          onChange={(e) => updatePwa({ pushBodyTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Çevrimdışı Başlık</label>
+                        <input
+                          type="text"
+                          value={pwa.offlineTitleTr || 'Çevrimdışı Mod'}
+                          onChange={(e) => updatePwa({ offlineTitleTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">Kurulum Butonu Etiketi</label>
+                        <input
+                          type="text"
+                          value={pwa.installButtonLabelTr}
+                          onChange={(e) => updatePwa({ installButtonLabelTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block font-semibold mb-1">iOS Safari İpucu Metni</label>
+                        <input
+                          type="text"
+                          value={pwa.iosHintTr}
+                          onChange={(e) => updatePwa({ iosHintTr: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Uygulama Kısayolları (App Shortcuts) ve Ekran Görüntüleri */}
+                    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 space-y-2.5">
+                      <div className="font-bold">Ana Ekran Kısayolları (Manifest Shortcuts: {(pwa.shortcuts || []).length})</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                        <input
+                          type="text"
+                          value={pwaShortcutName}
+                          onChange={(e) => setPwaShortcutName(e.target.value)}
+                          placeholder="Başlık (Örn: Menüye Git)"
+                          className="rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1"
+                        />
+                        <input
+                          type="text"
+                          value={pwaShortcutShort}
+                          onChange={(e) => setPwaShortcutShort(e.target.value)}
+                          placeholder="Kısa ad"
+                          className="rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1"
+                        />
+                        <input
+                          type="text"
+                          value={pwaShortcutUrl}
+                          onChange={(e) => setPwaShortcutUrl(e.target.value)}
+                          placeholder="/#menu"
+                          className="rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2 py-1 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!pwaShortcutName.trim()) return;
+                            updatePwa({
+                              shortcuts: [
+                                ...(pwa.shortcuts || []),
+                                {
+                                  name: pwaShortcutName.trim(),
+                                  shortName: pwaShortcutShort.trim() || pwaShortcutName.trim(),
+                                  url: pwaShortcutUrl.trim() || '/#menu',
+                                  description: pwaShortcutDesc.trim() || pwaShortcutName.trim(),
+                                },
+                              ],
+                            });
+                            setPwaShortcutName('');
+                            setPwaShortcutShort('');
+                            setPwaShortcutDesc('');
+                          }}
+                          className="px-3 py-1 rounded bg-[#B86B35] text-white font-bold cursor-pointer"
+                        >
+                          + Kısayol Ekle
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(pwa.shortcuts || []).map((sc, idx) => (
+                          <span
+                            key={`${sc.name}-${idx}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 font-medium"
+                          >
+                            <span>{sc.name}</span>
+                            <span className="font-mono text-[10px] text-neutral-500">{sc.url}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updatePwa({
+                                  shortcuts: (pwa.shortcuts || []).filter((_, i) => i !== idx),
+                                })
+                              }
+                              className="text-rose-500 font-bold cursor-pointer"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 space-y-2">
+                      <div className="font-bold">Mağaza &amp; Kurulum Ekran Görüntüleri (Screenshots)</div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={pwaShotInput}
+                          onChange={(e) => setPwaShotInput(e.target.value)}
+                          placeholder="/assets/aistudio/crops/hero-ciger.png"
+                          className="flex-1 rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-2.5 py-1 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!pwaShotInput.trim()) return;
+                            updatePwa({
+                              screenshots: [...(pwa.screenshots || []), pwaShotInput.trim()],
+                            });
+                            setPwaShotInput('');
+                          }}
+                          className="px-3 py-1 rounded bg-neutral-900 dark:bg-[#F5F2EB] text-white dark:text-[#141413] font-bold cursor-pointer"
+                        >
+                          + Görsel Ekle
+                        </button>
+                      </div>
+                      {(pwa.screenshots || []).length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {(pwa.screenshots || []).map((src, i) => (
+                            <div key={`${src}-${i}`} className="relative w-16 h-12 rounded border border-neutral-300 dark:border-neutral-700 overflow-hidden">
+                              <img src={src} alt={`PWA Shot ${i + 1}`} className="w-full h-full object-cover" />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updatePwa({
+                                    screenshots: (pwa.screenshots || []).filter((_, idx) => idx !== i),
+                                  })
+                                }
+                                className="absolute top-0 right-0 bg-black/80 text-white px-1 text-[9px]"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                      <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                        <input
+                          type="checkbox"
+                          checked={pwa.enableOfflineCache}
+                          onChange={(e) => updatePwa({ enableOfflineCache: e.target.checked })}
+                        />
+                        <span>Çevrimdışı Menü Önbelleği Aktif</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                        <input
+                          type="checkbox"
+                          checked={pwa.enablePushNotifications}
+                          onChange={(e) => updatePwa({ enablePushNotifications: e.target.checked })}
+                        />
+                        <span>Sipariş &amp; Masa Bildirimleri (Push)</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                        <input
+                          type="checkbox"
+                          checked={pwa.showHeaderInstallBtn !== false}
+                          onChange={(e) => updatePwa({ showHeaderInstallBtn: e.target.checked })}
+                        />
+                        <span>Müşteri Üst Barında &ldquo;Uygulamayı Yükle&rdquo; Göster</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                        <input
+                          type="checkbox"
+                          checked={pwa.showFooterCard !== false}
+                          onChange={(e) => updatePwa({ showFooterCard: e.target.checked })}
+                        />
+                        <span>Footer Altında PWA Kurulum Kartını Göster</span>
+                      </label>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if ('caches' in window) {
+                            const keys = await window.caches.keys();
+                            await Promise.all(keys.map((k) => window.caches.delete(k)));
+                          }
+                          setPwaDiagNotice('Tarayıcı PWA önbelleği temizlendi ve yenilendi.');
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
+                      >
+                        Önbelleği Yenile
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="pwa-send-test-push-btn"
+                        onClick={async () => {
+                          setPwaPushPreviewActive(true);
+                          if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                            new Notification(pwa.pushTitleTr || 'ÖzTike Ciğer', {
+                              body: pwa.pushBodyTr || 'Siparişiniz hazır!',
+                              icon: pwa.iconUrl,
+                            });
+                          }
+                          setPwaDiagNotice(
+                            `Canlı Push Bildirimi simüle edildi: "${pwa.pushTitleTr || 'ÖzTike Ciğer'}"`
+                          );
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-[#B86B35] text-white font-semibold cursor-pointer"
+                      >
+                        Canlı Push Bildirimi Gönder
+                      </button>
+                    </div>
+                    {pwaDiagNotice && (
+                      <div className="rounded-lg bg-emerald-500/15 border border-emerald-500/35 px-3 py-2 text-emerald-400 font-semibold">
+                        {pwaDiagNotice}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right 5 Cols: Mobile Splash Screen (Video/Image + Colors + Shortcuts) & Push Notification Simulator + Manifest */}
+                  <div className="lg:col-span-5 space-y-4">
+                    <div
+                      data-testid="pwa-splash-push-simulator"
+                      className="rounded-2xl border border-neutral-300 dark:border-neutral-700 p-4 space-y-4 shadow-xl relative overflow-hidden"
+                      style={{
+                        backgroundColor: pwa.backgroundColor || '#141413',
+                        color: pwa.splashTextColor || '#F5F2EB',
+                      }}
+                    >
+                      <div className="relative z-10 flex items-center justify-between text-[10px] font-mono opacity-80 border-b border-white/15 pb-2">
+                        <span>CANLI MOBİL AÇILIŞ &amp; BİLDİRİM SİMÜLATÖRÜ</span>
+                        <span>{pwa.displayMode}</span>
+                      </div>
+
+                      {pwa.splashVideoUrl ? (
+                        <video
+                          src={pwa.splashVideoUrl}
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                          className="w-full h-36 object-cover rounded-xl border border-white/15"
+                        />
+                      ) : pwa.splashImageUrl ? (
+                        <img
+                          src={pwa.splashImageUrl}
+                          alt="Splash Backdrop"
+                          className="w-full h-32 object-cover rounded-xl border border-white/15 opacity-90"
+                        />
+                      ) : null}
+
+                      {/* Simulated Push Banner */}
+                      {pwaPushPreviewActive && (
+                        <div className="rounded-xl bg-black/75 border border-white/15 p-3 flex items-start gap-2.5 backdrop-blur-md">
+                          <img
+                            src={pwa.iconUrl || '/assets/aistudio/oztike-logo-transparent.png'}
+                            alt="App Icon"
+                            className="w-9 h-9 rounded-lg object-contain bg-white/10 p-1 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                              <span className="font-bold text-white truncate">{pwa.shortName}</span>
+                              <span>şimdi</span>
+                            </div>
+                            <div
+                              className="font-bold text-xs truncate mt-0.5"
+                              style={{ color: pwa.accentColor || '#D4AF6A' }}
+                            >
+                              {pwa.pushTitleTr || 'ÖzTike Ciğer · Siparişiniz Hazır!'}
+                            </div>
+                            <div className="text-[11px] text-neutral-300 line-clamp-2">
+                              {pwa.pushBodyTr ||
+                                'Zırh kebabı ve taze kuzu ciğer şiş siparişiniz ocaktan çıktı.'}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Simulated Splash Screen */}
+                      <div className="py-3 text-center space-y-2.5">
+                        <div
+                          className="relative w-16 h-16 mx-auto rounded-2xl overflow-hidden border-2 shadow-lg bg-black/40 p-2"
+                          style={{ borderColor: pwa.accentColor || '#D4AF6A' }}
+                        >
+                          <img
+                            src={pwa.iconUrl || '/assets/aistudio/oztike-logo-transparent.png'}
+                            alt="Splash Logo"
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                        <div className="font-bold text-base">
+                          {pwa.splashTitleTr || pwa.appName}
+                        </div>
+                        <div className="text-[11px] opacity-80">
+                          {pwa.splashSubtitleTr || pwa.description}
+                        </div>
+                        <div className="w-24 h-1.5 mx-auto rounded-full overflow-hidden bg-white/15">
+                          <div
+                            className="h-full w-2/3 rounded-full"
+                            style={{ backgroundColor: pwa.themeColor || '#B86B35' }}
+                          />
+                        </div>
+                        <div>
+                          <span
+                            className="inline-block px-4 py-1.5 rounded-lg text-[11px] font-bold text-white shadow"
+                            style={{ backgroundColor: pwa.buttonColor || '#B86B35' }}
+                          >
+                            {pwa.installButtonLabelTr || 'Uygulamayı Yükle'}
+                          </span>
+                        </div>
+                        {(pwa.shortcuts || []).length > 0 && (
+                          <div className="flex flex-wrap justify-center gap-1 pt-1">
+                            {(pwa.shortcuts || []).slice(0, 3).map((s, i) => (
+                              <span
+                                key={`${s.name}-${i}`}
+                                className="px-2 py-0.5 rounded bg-white/10 text-[10px]"
+                              >
+                                {s.shortName || s.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-4 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-xs">Canlı manifest.webmanifest Çıktısı</h4>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const blob = new Blob([JSON.stringify(liveManifest, null, 2)], {
+                              type: 'application/manifest+json',
+                            });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = 'manifest.webmanifest';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#B86B35] text-white font-semibold cursor-pointer"
+                        >
+                          <Download className="w-3 h-3" /> İndir
+                        </button>
+                      </div>
+                      <pre className="rounded-xl bg-[#141413] text-emerald-300 p-3 text-[10px] font-mono overflow-x-auto max-h-[210px]">
+                        {JSON.stringify(liveManifest, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
       )}
 
       {/* =====================================================================
-          MODÜL 42: HARİTA & KONUM YÖNETİMİ
+          MODÜL 42: GELİŞMİŞ HARİTA & KONUM YÖNETİMİ (ÜCRETSİZ & ÜCRETLİ SERVİSLER)
       ===================================================================== */}
       {activeModuleId === 42 && (
-        <AdminMapManager
-          mapSettings={siteCmsConfig.mapSettings}
-          contact={siteCmsConfig.contact}
-          onUpdateMapSettings={(updater) =>
-            onUpdateSiteCmsConfig((prev) => ({
-              ...prev,
-              mapSettings: updater(prev.mapSettings),
-            }))
-          }
-          onNotify={(msg) => setStatusToast(msg)}
-        />
+        <div className="space-y-6 text-xs">
+          {(() => {
+            const ms = siteCmsConfig.mapSettings;
+            const updateMap = (patch: Partial<SiteCmsConfig['mapSettings']>) =>
+              onUpdateSiteCmsConfig((prev) => ({
+                ...prev,
+                mapSettings: { ...prev.mapSettings, ...patch },
+              }));
+
+            return (
+              <>
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                    <div>
+                      <h3 className="text-base font-semibold flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-[#B86B35]" />
+                        <span>32. Harita Servis Sağlayıcıları (Ücretsiz &amp; Ücretli) ve Konum Ayarları</span>
+                      </h3>
+                      <p className="text-neutral-500">
+                        Müşteri web sitesi footer bölümünde gösterilecek harita motorunu (OpenStreetMap, Google Free/API, Yandex, Özel Embed) ve altındaki navigasyon uygulama ikonlarını yönetin.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="inline-flex items-center gap-2 font-bold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={ms.enabled}
+                          onChange={(e) => updateMap({ enabled: e.target.checked })}
+                        />
+                        <span>Harita Sistemi Aktif</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 font-bold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={ms.showFooterMap !== false}
+                          onChange={(e) => updateMap({ showFooterMap: e.target.checked })}
+                        />
+                        <span>Footer Konum Haritası Göster</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Ücretsiz vs Ücretli Sağlayıcı Seçimi */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div
+                      className={`rounded-xl border-2 p-4 space-y-3 ${
+                        (ms.providerMode || 'free') === 'free'
+                          ? 'border-emerald-500 bg-emerald-950/10'
+                          : 'border-neutral-200 dark:border-neutral-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <label className="inline-flex items-center gap-2 font-bold text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="mapProviderMode"
+                            checked={(ms.providerMode || 'free') === 'free'}
+                            onChange={() => updateMap({ providerMode: 'free' as MapProviderMode })}
+                          />
+                          <span>Ücretsiz Harita Servisleri</span>
+                        </label>
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
+                          API Anahtarı Gerekmez
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {[
+                          { id: 'google-embed-free', label: 'Google Maps Embed', desc: 'Standart pinli görünüm' },
+                          { id: 'openstreetmap', label: 'OpenStreetMap', desc: 'Açık kaynak harita' },
+                          { id: 'yandex-embed', label: 'Yandex Haritalar', desc: 'Türkiye detaylı sokak' },
+                        ].map((prov) => (
+                          <button
+                            key={prov.id}
+                            type="button"
+                            data-testid={`map-free-${prov.id}`}
+                            onClick={() =>
+                              updateMap({
+                                providerMode: 'free',
+                                freeProvider: prov.id as FreeMapProviderId,
+                              })
+                            }
+                            className={`p-2.5 rounded-lg border text-left cursor-pointer transition ${
+                              (ms.providerMode || 'free') === 'free' && ms.freeProvider === prov.id
+                                ? 'border-emerald-500 bg-emerald-500/15'
+                                : 'border-neutral-200 dark:border-neutral-800'
+                            }`}
+                          >
+                            <div className="font-bold text-[11px]">{prov.label}</div>
+                            <div className="text-[10px] text-neutral-500">{prov.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`rounded-xl border-2 p-4 space-y-3 ${
+                        ms.providerMode === 'paid'
+                          ? 'border-[#D4AF6A] bg-amber-950/15'
+                          : 'border-neutral-200 dark:border-neutral-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <label className="inline-flex items-center gap-2 font-bold text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="mapProviderMode"
+                            checked={ms.providerMode === 'paid'}
+                            onChange={() => updateMap({ providerMode: 'paid' as MapProviderMode })}
+                          />
+                          <span>Ücretli / API Anahtarlı Servisler</span>
+                        </label>
+                        <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold text-[10px]">
+                          Pro · Yüksek Kota
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {[
+                          { id: 'google-js-api', label: 'Google Maps JS SDK', desc: '3D / Özel Marker' },
+                          { id: 'google-embed-api', label: 'Google Embed API v1', desc: 'Kurumsal Embed' },
+                          { id: 'custom-embed', label: 'Mapbox / Özel URL', desc: 'Özel iframe kaynağı' },
+                        ].map((prov) => (
+                          <button
+                            key={prov.id}
+                            type="button"
+                            data-testid={`map-paid-${prov.id}`}
+                            onClick={() =>
+                              updateMap({
+                                providerMode: 'paid',
+                                paidProvider: prov.id as PaidMapProviderId,
+                                enableGoogleMapsJs: prov.id === 'google-js-api',
+                              })
+                            }
+                            className={`p-2.5 rounded-lg border text-left cursor-pointer transition ${
+                              ms.providerMode === 'paid' && ms.paidProvider === prov.id
+                                ? 'border-[#D4AF6A] bg-[#D4AF6A]/15'
+                                : 'border-neutral-200 dark:border-neutral-800'
+                            }`}
+                          >
+                            <div className="font-bold text-[11px]">{prov.label}</div>
+                            <div className="text-[10px] text-neutral-500">{prov.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {ms.paidProvider === 'custom-embed' ? (
+                        <input
+                          type="url"
+                          value={ms.customEmbedUrl || ''}
+                          onChange={(e) => updateMap({ customEmbedUrl: e.target.value })}
+                          placeholder="https://api.mapbox.com/... özel harita iframe URL"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                        />
+                      ) : (
+                        <input
+                          type="password"
+                          value={ms.paidApiKey || ''}
+                          onChange={(e) => updateMap({ paidApiKey: e.target.value })}
+                          placeholder="Google Maps API Key (boş bırakılırsa ücretsiz haritaya düşer)"
+                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Koordinat & Adres Bilgileri + Hızlı Konum Presetleri */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div>
+                      <label className="block font-semibold mb-1">Enlem (Latitude)</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={ms.lat}
+                        onChange={(e) => updateMap({ lat: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Boylam (Longitude)</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={ms.lng}
+                        onChange={(e) => updateMap({ lng: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Yakınlaştırma ({ms.zoom})</label>
+                      <input
+                        type="range"
+                        min={10}
+                        max={20}
+                        value={ms.zoom}
+                        onChange={(e) => updateMap({ zoom: Number(e.target.value) })}
+                        className="w-full mt-2 accent-[#B86B35]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Harita Üstü Mekân Adı</label>
+                      <input
+                        type="text"
+                        value={ms.placeName}
+                        onChange={(e) => updateMap({ placeName: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Açık Adres Satırı</label>
+                      <input
+                        type="text"
+                        value={ms.addressLine}
+                        onChange={(e) => updateMap({ addressLine: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-neutral-500">Hızlı Gaziantep Konum Presetleri:</span>
+                    {[
+                      { label: 'Şahinbey Merkez', lat: 37.0628, lng: 37.3795 },
+                      { label: 'Karagöz Meydanı', lat: 37.0654, lng: 37.3812 },
+                      { label: 'Gaziantep Kalesi', lat: 37.0662, lng: 37.3834 },
+                      { label: 'İbrahimli Şubesi', lat: 37.0785, lng: 37.3342 },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          updateMap({ lat: preset.lat, lng: preset.lng });
+                          setStatusToast(`Konum "${preset.label}" koordinatlarına ayarlandı.`);
+                        }}
+                        className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Navigasyon Uygulaması İkon Ayarları + Canlı Konum Navigasyonu Bileşeni */}
+                  <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 space-y-3">
+                    <div className="font-semibold">
+                      Harita Altında Gösterilecek Navigasyon Uygulaması İkonları:
+                    </div>
+                    <div className="flex flex-wrap gap-4">
+                      {[
+                        { key: 'enableGoogleNav', label: 'Google Navigasyon' },
+                        { key: 'enableAppleMaps', label: 'Apple Maps' },
+                        { key: 'enableWaze', label: 'Waze' },
+                        { key: 'enableYandexMaps', label: 'Yandex Haritalar' },
+                        { key: 'enableOpenStreetMap', label: 'OpenStreetMap' },
+                        { key: 'enableBingMaps', label: 'Bing Maps' },
+                      ].map((item) => {
+                        const k = item.key as keyof SiteCmsConfig['mapSettings'];
+                        return (
+                          <label key={item.key} className="inline-flex items-center gap-2 cursor-pointer font-medium">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(ms[k])}
+                              onChange={(e) => updateMap({ [k]: e.target.checked })}
+                            />
+                            <span>{item.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    <div className="rounded-xl bg-[#141413] p-3.5 border border-neutral-800">
+                      <KonumNavigasyonu
+                        mapSettings={ms}
+                        title="Konum Navigasyonu Hızlı Tetikleme Barı (Canlı Önizleme)"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Admin Canlı Harita Önizlemesi */}
+                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-3">
+                  <h4 className="font-bold text-sm">Canlı Müşteri Footer Harita Önizlemesi</h4>
+                  <RestaurantMapSection
+                    mapSettings={ms}
+                    contact={siteCmsConfig.contact}
+                    compact
+                    showProviderBadge
+                  />
+                </div>
+              </>
+            );
+          })()}
+        </div>
       )}
 
       {/* Otomatik Fiş / e-Fatura (e-Arşiv) Önizleme & Termal Yazdırma Modalı */}
@@ -5547,12 +8675,15 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
         <div
           role="dialog"
           aria-modal="true"
+          data-testid="admin-receipt-invoice-modal"
           aria-label="Otomatik Fiş ve e-Fatura Önizleme"
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
         >
-          <div className="w-full max-w-sm rounded-2xl border border-neutral-300 bg-[#FAF7F0] text-[#141413] p-5 font-mono text-xs space-y-3 shadow-2xl">
+          <div className="w-full max-w-md rounded-2xl border border-neutral-300 bg-[#FAF7F0] text-[#141413] p-5 space-y-3 shadow-2xl my-auto">
             <div className="flex items-center justify-between border-b border-dashed border-neutral-400 pb-2">
-              <span className="font-sans font-bold text-sm">Otomatik Fiş &amp; e-Arşiv Fatura</span>
+              <span className="font-sans font-bold text-sm">
+                Otomatik Termal Fiş &amp; e-Arşiv Fatura
+              </span>
               <button
                 type="button"
                 onClick={() => setReceiptInvoiceModalOrder(null)}
@@ -5562,73 +8693,60 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="text-center space-y-0.5 border-b border-dashed border-neutral-400 pb-3">
-              <div className="font-bold text-sm">ÖZTİKE CİĞER · HALİL USTA</div>
-              <div>{siteCmsConfig.contact.addressTr}</div>
-              <div>{siteCmsConfig.generalSettings.taxOfficeAndNo}</div>
-              <div>Fiş No: {receiptInvoiceModalOrder.receiptNumber}</div>
-              <div>e-Fatura: {receiptInvoiceModalOrder.eInvoiceNo}</div>
-              <div>
-                Sipariş: {receiptInvoiceModalOrder.orderNumber} · {receiptInvoiceModalOrder.tableName}
-              </div>
+
+            <div className="max-h-[62vh] overflow-y-auto flex justify-center">
+              <div
+                className={`w-full ${
+                  siteCmsConfig.receiptSettings?.paperWidthMm === 58
+                    ? 'max-w-[270px]'
+                    : 'max-w-[355px]'
+                } rounded-lg border border-neutral-300 bg-[#FFFDF9] p-3.5 shadow-sm`}
+                dangerouslySetInnerHTML={{
+                  __html: buildThermalReceiptInnerMarkup(receiptInvoiceModalOrder, {
+                    ...siteCmsConfig.receiptSettings,
+                    companyName:
+                      siteCmsConfig.receiptSettings?.companyName ||
+                      siteCmsConfig.generalSettings.companyLegalName,
+                    legalName: siteCmsConfig.receiptSettings?.legalName,
+                    address:
+                      siteCmsConfig.receiptSettings?.address || siteCmsConfig.contact.addressTr,
+                    phone:
+                      siteCmsConfig.receiptSettings?.phone || siteCmsConfig.contact.phoneDisplay,
+                    taxOfficeAndNo:
+                      siteCmsConfig.receiptSettings?.taxOfficeAndNo ||
+                      siteCmsConfig.generalSettings.taxOfficeAndNo,
+                    taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
+                    logoUrl: siteCmsConfig.header.logoUrl,
+                  }),
+                }}
+              />
             </div>
-            <div className="space-y-1.5 border-b border-dashed border-neutral-400 pb-3">
-              {receiptInvoiceModalOrder.items.map((it) => (
-                <div key={it.id} className="flex justify-between gap-2">
-                  <span>
-                    {it.quantity}x {it.productName}
-                  </span>
-                  <span>{(it.unitPrice * it.quantity).toFixed(2)} ₺</span>
-                </div>
-              ))}
-              {receiptInvoiceModalOrder.discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-700">
-                  <span>Kampanya İndirimi</span>
-                  <span>-{receiptInvoiceModalOrder.discountAmount.toFixed(2)} ₺</span>
-                </div>
-              )}
-              {(receiptInvoiceModalOrder.deliveryFee || 0) > 0 && (
-                <div className="flex justify-between">
-                  <span>Kurye Teslimat Ücreti</span>
-                  <span>+{(receiptInvoiceModalOrder.deliveryFee || 0).toFixed(2)} ₺</span>
-                </div>
-              )}
-              {(receiptInvoiceModalOrder.tipAmount || 0) > 0 && (
-                <div className="flex justify-between">
-                  <span>Servis Bahşişi</span>
-                  <span>+{(receiptInvoiceModalOrder.tipAmount || 0).toFixed(2)} ₺</span>
-                </div>
-              )}
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between">
-                <span>Ödeme Yöntemi</span>
-                <span>{receiptInvoiceModalOrder.paymentMethod || 'Nakit / POS (Kasa)'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>KDV (%{siteCmsConfig.generalSettings.taxRatePercent ?? 10})</span>
-                <span>{receiptInvoiceModalOrder.taxAmount.toFixed(2)} ₺</span>
-              </div>
-              <div className="flex justify-between font-bold text-sm pt-1 border-t border-neutral-300">
-                <span>GENEL TOPLAM</span>
-                <span>{receiptInvoiceModalOrder.totalAmount.toFixed(2)} ₺</span>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 font-sans">
+
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 font-sans border-t border-neutral-300">
               <button
                 type="button"
+                data-testid="admin-modal-print-receipt-btn"
                 onClick={() => {
                   const ok = printThermalReceipt(receiptInvoiceModalOrder, {
-                    companyName: siteCmsConfig.generalSettings.companyLegalName,
-                    address: siteCmsConfig.contact.addressTr,
-                    phone: siteCmsConfig.contact.phoneDisplay,
-                    taxOfficeAndNo: siteCmsConfig.generalSettings.taxOfficeAndNo,
+                    ...siteCmsConfig.receiptSettings,
+                    companyName:
+                      siteCmsConfig.receiptSettings?.companyName ||
+                      siteCmsConfig.generalSettings.companyLegalName,
+                    legalName: siteCmsConfig.receiptSettings?.legalName,
+                    address:
+                      siteCmsConfig.receiptSettings?.address || siteCmsConfig.contact.addressTr,
+                    phone:
+                      siteCmsConfig.receiptSettings?.phone || siteCmsConfig.contact.phoneDisplay,
+                    taxOfficeAndNo:
+                      siteCmsConfig.receiptSettings?.taxOfficeAndNo ||
+                      siteCmsConfig.generalSettings.taxOfficeAndNo,
+                    taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
                     logoUrl: siteCmsConfig.header.logoUrl,
                   });
                   setStatusToast(
                     ok
                       ? `${receiptInvoiceModalOrder.orderNumber} fişi termal yazıcıya gönderildi.`
-                      : 'Tarayıcı yazdırma penceresi açılamadı; e-Arşiv HTML indir butonunu kullanın.'
+                      : 'Termal fiş yazdır penceresi tetiklendi.'
                   );
                 }}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#B86B35] text-white font-bold text-xs cursor-pointer"
@@ -5639,17 +8757,28 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
                 type="button"
                 onClick={() => {
                   downloadThermalReceiptHtml(receiptInvoiceModalOrder, {
-                    companyName: siteCmsConfig.generalSettings.companyLegalName,
-                    address: siteCmsConfig.contact.addressTr,
-                    phone: siteCmsConfig.contact.phoneDisplay,
-                    taxOfficeAndNo: siteCmsConfig.generalSettings.taxOfficeAndNo,
+                    ...siteCmsConfig.receiptSettings,
+                    companyName:
+                      siteCmsConfig.receiptSettings?.companyName ||
+                      siteCmsConfig.generalSettings.companyLegalName,
+                    legalName: siteCmsConfig.receiptSettings?.legalName,
+                    address:
+                      siteCmsConfig.receiptSettings?.address || siteCmsConfig.contact.addressTr,
+                    phone:
+                      siteCmsConfig.receiptSettings?.phone || siteCmsConfig.contact.phoneDisplay,
+                    taxOfficeAndNo:
+                      siteCmsConfig.receiptSettings?.taxOfficeAndNo ||
+                      siteCmsConfig.generalSettings.taxOfficeAndNo,
+                    taxRatePercent: siteCmsConfig.generalSettings.taxRatePercent ?? 10,
                     logoUrl: siteCmsConfig.header.logoUrl,
                   });
-                  setStatusToast(`${receiptInvoiceModalOrder.orderNumber} e-Arşiv fişi HTML olarak indirildi.`);
+                  setStatusToast(
+                    `${receiptInvoiceModalOrder.orderNumber} e-Arşiv fişi HTML olarak indirildi.`
+                  );
                 }}
                 className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-neutral-400 bg-white text-[#141413] font-semibold text-xs cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5" /> e-Arşiv İndir
+                <Download className="w-3.5 h-3.5" /> e-Arşiv İndir (.HTML)
               </button>
               <button
                 type="button"
@@ -5658,747 +8787,6 @@ export const AdminModulesPanel: React.FC<AdminModulesPanelProps> = ({
               >
                 Kapat
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* =====================================================================
-          GELİŞMİŞ ENTEGRASYON, POS, ÖDEME & API YAPILANDIRMA MODALI (MODÜL 31)
-      ===================================================================== */}
-      {selectedIntegrationForConfig && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="intg-modal-title"
-        >
-          <div className="w-full max-w-2xl rounded-2xl border border-[#D4AF6A]/50 bg-white dark:bg-[#1A1815] text-neutral-900 dark:text-[#F5F2EB] p-6 space-y-4 shadow-2xl my-6">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-[#B86B35]/20 text-[#B86B35] dark:text-[#D4AF6A]">
-                  <Sliders className="w-6 h-6" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 id="intg-modal-title" className="font-bold text-base">
-                      {selectedIntegrationForConfig.name}
-                    </h3>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A]">
-                      {selectedIntegrationForConfig.category}
-                    </span>
-                  </div>
-                  <p className="text-xs text-neutral-500 mt-0.5">
-                    API anahtarları, sunucu adresleri, komisyon oranları ve özel donanım parametreleri
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedIntegrationForConfig(null)}
-                aria-label="Kapat"
-                className="p-1 rounded-lg text-neutral-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Sekmeleri */}
-            <div className="flex items-center gap-2 border-b border-neutral-200 dark:border-neutral-800 pb-2 text-xs">
-              <button
-                type="button"
-                onClick={() => setIntegrationActiveTab('api')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-                  integrationActiveTab === 'api'
-                    ? 'bg-[#B86B35] text-white'
-                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                🔑 API &amp; Kimlik Doğrulama
-              </button>
-              <button
-                type="button"
-                onClick={() => setIntegrationActiveTab('network')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-                  integrationActiveTab === 'network'
-                    ? 'bg-[#B86B35] text-white'
-                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                🌐 Ağ, IP &amp; Protokol
-              </button>
-              <button
-                type="button"
-                onClick={() => setIntegrationActiveTab('custom')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-                  integrationActiveTab === 'custom'
-                    ? 'bg-[#B86B35] text-white'
-                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                ⚙️ İşletme &amp; Özel Alanlar
-              </button>
-              <button
-                type="button"
-                onClick={() => setIntegrationActiveTab('test')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-                  integrationActiveTab === 'test'
-                    ? 'bg-[#B86B35] text-white'
-                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                📡 Canlı Ping &amp; Test
-              </button>
-            </div>
-
-            {/* TAB 1: API & Kimlik Doğrulama */}
-            {integrationActiveTab === 'api' && (
-              <div className="space-y-3 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold mb-1">Çalışma Ortamı (Environment)</label>
-                    <select
-                      value={integrationFormConfig.environment || 'Sandbox'}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({
-                          ...prev,
-                          environment: e.target.value as 'Sandbox' | 'Production',
-                        }))
-                      }
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-medium"
-                    >
-                      <option value="Sandbox">Test (Sandbox / Demo Modu)</option>
-                      <option value="Production">Canlı (Live / Gerçek Ortam)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Üye İşyeri / Mağaza ID (Merchant ID)</label>
-                    <input
-                      type="text"
-                      value={integrationFormConfig.merchantId || ''}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, merchantId: e.target.value }))
-                      }
-                      placeholder="Örn: OZT-IYZ-27001"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-semibold mb-1">API Key / Genel Erişim Anahtarı</label>
-                  <input
-                    type="text"
-                    value={integrationFormConfig.apiKey || ''}
-                    onChange={(e) =>
-                      setIntegrationFormConfig((prev) => ({ ...prev, apiKey: e.target.value }))
-                    }
-                    placeholder="pk_live_... veya api_key_token"
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold">Secret Key / Gizli İmzalı Şifre</label>
-                    <button
-                      type="button"
-                      onClick={() => setIntegrationShowSecret(!integrationShowSecret)}
-                      className="text-[11px] text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1 cursor-pointer"
-                    >
-                      {integrationShowSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      <span>{integrationShowSecret ? 'Gizle' : 'Göster'}</span>
-                    </button>
-                  </div>
-                  <input
-                    type={integrationShowSecret ? 'text' : 'password'}
-                    value={integrationFormConfig.apiSecret || ''}
-                    onChange={(e) =>
-                      setIntegrationFormConfig((prev) => ({ ...prev, apiSecret: e.target.value }))
-                    }
-                    placeholder="sk_live_... gizli güvenlik anahtarı"
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold mb-1">Terminal ID / POS Cihaz Kodu</label>
-                    <input
-                      type="text"
-                      value={integrationFormConfig.terminalId || ''}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, terminalId: e.target.value }))
-                      }
-                      placeholder="TRM-01"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Webhook Secret / HMAC İmzası</label>
-                    <input
-                      type="text"
-                      value={integrationFormConfig.webhookSecret || ''}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, webhookSecret: e.target.value }))
-                      }
-                      placeholder="whsec_..."
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: Ağ & Protokol */}
-            {integrationActiveTab === 'network' && (
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block font-semibold mb-1">API Endpoint / Servis URL</label>
-                  <input
-                    type="url"
-                    value={integrationFormConfig.endpointUrl || ''}
-                    onChange={(e) =>
-                      setIntegrationFormConfig((prev) => ({ ...prev, endpointUrl: e.target.value }))
-                    }
-                    placeholder="https://api.oztikeciger.com.tr/v2/..."
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block font-semibold mb-1">Cihaz / Sunucu IP Adresi</label>
-                    <input
-                      type="text"
-                      value={integrationFormConfig.ipAddress || ''}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, ipAddress: e.target.value }))
-                      }
-                      placeholder="192.168.1.201"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Port Numarası</label>
-                    <input
-                      type="number"
-                      value={integrationFormConfig.port || 9100}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, port: Number(e.target.value) }))
-                      }
-                      placeholder="9100"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Zaman Aşımı (Timeout ms)</label>
-                    <input
-                      type="number"
-                      value={integrationFormConfig.timeoutMs || 4500}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, timeoutMs: Number(e.target.value) }))
-                      }
-                      placeholder="4500"
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold mb-1">İletişim Protokolü</label>
-                    <select
-                      value={integrationFormConfig.posTerminalProtocol || 'JSON-RPC'}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({
-                          ...prev,
-                          posTerminalProtocol: e.target.value as any,
-                        }))
-                      }
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-medium"
-                    >
-                      <option value="JSON-RPC">JSON-RPC over HTTP / WebSocket</option>
-                      <option value="REST">REST API (JSON Payload)</option>
-                      <option value="TCP-Socket">Raw TCP / ESC-POS Socket</option>
-                      <option value="Serial-COM">Seri Port (RS232 / USB COM)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Hata Durumunda Tekrar Deneme Sayısı</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={5}
-                      value={integrationFormConfig.retryAttempts || 3}
-                      onChange={(e) =>
-                        setIntegrationFormConfig((prev) => ({ ...prev, retryAttempts: Number(e.target.value) }))
-                      }
-                      className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-semibold mb-1">Özel İstek Başlıkları (Custom Headers JSON)</label>
-                  <textarea
-                    rows={2}
-                    value={integrationFormConfig.customHeaders || ''}
-                    onChange={(e) =>
-                      setIntegrationFormConfig((prev) => ({ ...prev, customHeaders: e.target.value }))
-                    }
-                    className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-2 font-mono text-[11px]"
-                  />
-                </div>
-
-                <label className="flex items-center gap-2 cursor-pointer font-semibold pt-1">
-                  <input
-                    type="checkbox"
-                    checked={integrationFormConfig.debugLogging || false}
-                    onChange={(e) =>
-                      setIntegrationFormConfig((prev) => ({ ...prev, debugLogging: e.target.checked }))
-                    }
-                  />
-                  <span>Ayrıntılı Hata Günlüğü &amp; İstek Payload Kaydı (Debug Logging)</span>
-                </label>
-              </div>
-            )}
-
-            {/* TAB 3: İşletme & Donanım Özelleştirmeleri */}
-            {integrationActiveTab === 'custom' && (
-              <div className="space-y-4 text-xs">
-                {/* Ödeme & Sanal POS Ayarları */}
-                {(selectedIntegrationForConfig.category === 'Ödeme' ||
-                  selectedIntegrationForConfig.code.includes('pos')) && (
-                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
-                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                      <CreditCard className="w-4 h-4" />
-                      <span>Sanal POS &amp; Ödeme Güvenliği Ayarları</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-semibold mb-1">Komisyon Oranı (%)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={integrationFormConfig.commissionRate ?? 1.89}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              commissionRate: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">Para Birimi</label>
-                        <select
-                          value={integrationFormConfig.currency || 'TRY'}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              currency: e.target.value as any,
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
-                        >
-                          <option value="TRY">Türk Lirası (₺ - TRY)</option>
-                          <option value="USD">Amerikan Doları ($ - USD)</option>
-                          <option value="EUR">Euro (€ - EUR)</option>
-                        </select>
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer font-semibold">
-                      <input
-                        type="checkbox"
-                        checked={integrationFormConfig.threeDSecure !== false}
-                        onChange={(e) =>
-                          setIntegrationFormConfig((prev) => ({ ...prev, threeDSecure: e.target.checked }))
-                        }
-                      />
-                      <span>3D Secure Güvenlik Doğrulaması Zorunlu</span>
-                    </label>
-
-                    {/* Yemek Kartları Anahtarları */}
-                    <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700 space-y-1.5">
-                      <div className="font-semibold text-neutral-600 dark:text-neutral-400">
-                        Desteklenen Yemek Kartı Ağları:
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={integrationFormConfig.multinetActive !== false}
-                            onChange={(e) =>
-                              setIntegrationFormConfig((prev) => ({
-                                ...prev,
-                                multinetActive: e.target.checked,
-                              }))
-                            }
-                          />
-                          <span>Multinet</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={integrationFormConfig.pluxeeActive !== false}
-                            onChange={(e) =>
-                              setIntegrationFormConfig((prev) => ({ ...prev, pluxeeActive: e.target.checked }))
-                            }
-                          />
-                          <span>Pluxee (Sodexo)</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={integrationFormConfig.edenredActive !== false}
-                            onChange={(e) =>
-                              setIntegrationFormConfig((prev) => ({ ...prev, edenredActive: e.target.checked }))
-                            }
-                          />
-                          <span>Edenred</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={integrationFormConfig.setcardActive !== false}
-                            onChange={(e) =>
-                              setIntegrationFormConfig((prev) => ({ ...prev, setcardActive: e.target.checked }))
-                            }
-                          />
-                          <span>Setcard</span>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Yazıcı & ESC/POS Ayarları */}
-                {selectedIntegrationForConfig.category === 'Yazıcı' && (
-                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
-                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                      <Printer className="w-4 h-4" />
-                      <span>Termal Fiş &amp; Mutfak İstasyonu Yazıcı Parametreleri</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-semibold mb-1">Termal Kağıt Genişliği</label>
-                        <select
-                          value={integrationFormConfig.paperWidthMm || 80}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              paperWidthMm: Number(e.target.value) as 58 | 80,
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-medium"
-                        >
-                          <option value={80}>80 mm Standart Restoran Termal Fiş</option>
-                          <option value={58}>58 mm Kompakt Kasa / Mobil Yazıcı</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">Mutfak İstasyon Yönlendirme</label>
-                        <input
-                          type="text"
-                          value={integrationFormConfig.kitchenStationRouting || 'Ocakbaşı & Zırh Hattı'}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              kitchenStationRouting: e.target.value,
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-4 pt-1">
-                      <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={integrationFormConfig.autoCutPaper !== false}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({ ...prev, autoCutPaper: e.target.checked }))
-                          }
-                        />
-                        <span>Otomatik Kağıt Kesme (Auto-cut)</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={integrationFormConfig.autoPrintReceipt !== false}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              autoPrintReceipt: e.target.checked,
-                            }))
-                          }
-                        />
-                        <span>Sipariş Geldiğinde Otomatik Mutfak Fişi Bas</span>
-                      </label>
-                    </div>
-                  </div>
-                )}
-
-                {/* Yemek Platformları (Getir, Yemeksepeti, Trendyol GO, Migros) */}
-                {selectedIntegrationForConfig.category === 'Yemek Platformu' && (
-                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
-                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                      <Truck className="w-4 h-4" />
-                      <span>Pazaryeri &amp; Kurye Hazırlık Parametreleri</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-semibold mb-1">Mutfak Hazırlık Süresi (Dakika)</label>
-                        <input
-                          type="number"
-                          min={5}
-                          max={60}
-                          value={integrationFormConfig.defaultPrepMinutes || 18}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              defaultPrepMinutes: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
-                        />
-                      </div>
-                      <div className="flex items-end pb-1.5">
-                        <label className="flex items-center gap-2 cursor-pointer font-semibold">
-                          <input
-                            type="checkbox"
-                            checked={integrationFormConfig.autoConfirmOrders !== false}
-                            onChange={(e) =>
-                              setIntegrationFormConfig((prev) => ({
-                                ...prev,
-                                autoConfirmOrders: e.target.checked,
-                              }))
-                            }
-                          />
-                          <span>Gelen Siparişleri Otomatik Onayla</span>
-                        </label>
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer font-semibold">
-                      <input
-                        type="checkbox"
-                        checked={integrationFormConfig.stockSyncEnabled !== false}
-                        onChange={(e) =>
-                          setIntegrationFormConfig((prev) => ({
-                            ...prev,
-                            stockSyncEnabled: e.target.checked,
-                          }))
-                        }
-                      />
-                      <span>Tükenen Ürünleri Platform Menüsünde Otomatik Durdur (Stok Eşitleme)</span>
-                    </label>
-                  </div>
-                )}
-
-                {/* E-belge & Muhasebe Ayarları */}
-                {(selectedIntegrationForConfig.category === 'E-belge' ||
-                  selectedIntegrationForConfig.category === 'Muhasebe') && (
-                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
-                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                      <Receipt className="w-4 h-4" />
-                      <span>GİB Yetkili Özel Entegratör &amp; e-Fatura Ayarları</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-semibold mb-1">Yetkili Entegratör Firması</label>
-                        <select
-                          value={integrationFormConfig.integratorCompany || 'Uyumsoft / QNB e-Finans'}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              integratorCompany: e.target.value,
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
-                        >
-                          <option value="Uyumsoft / QNB e-Finans">Uyumsoft / QNB e-Finans GİB Portalı</option>
-                          <option value="Sovos / Foriba">Sovos / Foriba Entegratör</option>
-                          <option value="Paraşüt API">Paraşüt e-Arşiv API</option>
-                          <option value="Logo Yazılım">Logo Entegrasyon Servisi</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">e-Arşiv Fatura Seri Ön Eki</label>
-                        <input
-                          type="text"
-                          value={integrationFormConfig.eInvoicePrefix || 'ÖZT2026'}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              eInvoicePrefix: e.target.value,
-                            }))
-                          }
-                          placeholder="ÖZT2026"
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
-                        />
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer font-semibold">
-                      <input
-                        type="checkbox"
-                        checked={integrationFormConfig.autoIssueOnPayment !== false}
-                        onChange={(e) =>
-                          setIntegrationFormConfig((prev) => ({
-                            ...prev,
-                            autoIssueOnPayment: e.target.checked,
-                          }))
-                        }
-                      />
-                      <span>Kasa veya QR Tahsilatı Tamamlandığında Otomatik e-Arşiv Fatura Oluştur</span>
-                    </label>
-                  </div>
-                )}
-
-                {/* SMS & WhatsApp Ayarları */}
-                {(selectedIntegrationForConfig.category === 'SMS' ||
-                  selectedIntegrationForConfig.category === 'WhatsApp Business') && (
-                  <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50 dark:bg-[#141413]">
-                    <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                      <BellRing className="w-4 h-4" />
-                      <span>Mesajlaşma &amp; Gönderici Başlığı</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-semibold mb-1">Gönderici Başlığı (SMS Header)</label>
-                        <input
-                          type="text"
-                          value={integrationFormConfig.smsSenderHeader || 'OZTIKECIGER'}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              smsSenderHeader: e.target.value,
-                            }))
-                          }
-                          placeholder="OZTIKECIGER"
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold mb-1">Varsayılan Şablon Dili</label>
-                        <select
-                          value={integrationFormConfig.templateLanguage || 'tr'}
-                          onChange={(e) =>
-                            setIntegrationFormConfig((prev) => ({
-                              ...prev,
-                              templateLanguage: e.target.value,
-                            }))
-                          }
-                          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] px-3 py-1.5"
-                        >
-                          <option value="tr">Türkçe (Varsayılan)</option>
-                          <option value="en">İngilizce (English)</option>
-                          <option value="ar">Arapça (العربية)</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 4: Canlı Test (Ping) */}
-            {integrationActiveTab === 'test' && (
-              <div className="space-y-4 text-xs">
-                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3 bg-neutral-50 dark:bg-[#141413]">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-neutral-900 dark:text-[#F5F2EB] flex items-center gap-1.5">
-                        <Activity className="w-4 h-4 text-[#B86B35]" />
-                        <span>Canlı Ağ ve API Bağlantı Testi (Ping)</span>
-                      </h4>
-                      <p className="text-[11px] text-neutral-500 mt-0.5">
-                        Tanımlanan API anahtarları ve endpoint adresi üzerinden gerçek zamanlı iletişim testi yapar.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleTestPingIntegration(selectedIntegrationForConfig)}
-                      disabled={integrationPingStatus.status === 'testing'}
-                      className="px-4 py-2 rounded-xl bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5 shadow-sm"
-                    >
-                      {integrationPingStatus.status === 'testing' ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Bağlantı Sınanıyor...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Radio className="w-3.5 h-3.5" />
-                          <span>Canlı Ping Gönder</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {integrationPingStatus.status === 'success' && (
-                    <div className="p-3 rounded-lg border border-emerald-500/50 bg-emerald-950/20 text-emerald-200 space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                        <span>Bağlantı Başarılı · HTTP 200 OK</span>
-                      </div>
-                      <div className="text-[11px] font-mono text-emerald-300">
-                        {integrationPingStatus.message} · Gecikme Süresi: {integrationPingStatus.latencyMs} ms
-                      </div>
-                    </div>
-                  )}
-
-                  {integrationPingStatus.status === 'error' && (
-                    <div className="p-3 rounded-lg border border-rose-500/50 bg-rose-950/20 text-rose-200 space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4 text-rose-400" />
-                        <span>Bağlantı Hatası</span>
-                      </div>
-                      <div className="text-[11px] font-mono text-rose-300">
-                        {integrationPingStatus.message || 'API servisine erişilemedi. Lütfen anahtar ve endpoint URL adresinizi kontrol edin.'}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="p-3 rounded-lg bg-white dark:bg-[#1A1815] border border-neutral-200 dark:border-neutral-800 space-y-1 font-mono text-[11px] text-neutral-500">
-                    <div>Protokol: {integrationFormConfig.posTerminalProtocol || 'REST / JSON-RPC'}</div>
-                    <div>Hedef: {integrationFormConfig.endpointUrl || `${integrationFormConfig.ipAddress}:${integrationFormConfig.port}`}</div>
-                    <div>Sözleşme Doğrulaması: {selectedIntegrationForConfig.contractVerified ? '✓ Onaylı ve İmzalı' : 'Beklemede'}</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Modal Footer */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-neutral-200 dark:border-neutral-800 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  handleOpenIntegrationConfig(selectedIntegrationForConfig);
-                  setStatusToast('Ayarlar fabrika varsayılanlarına sıfırlandı.');
-                }}
-                className="px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-white font-medium cursor-pointer"
-              >
-                Varsayılanlara Sıfırla
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedIntegrationForConfig(null)}
-                  className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 font-semibold cursor-pointer"
-                >
-                  Vazgeç
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveIntegrationConfig}
-                  className="px-5 py-2 rounded-xl bg-[#B86B35] hover:bg-[#9F5928] text-white font-bold cursor-pointer shadow-sm"
-                >
-                  Değişiklikleri Kaydet
-                </button>
-              </div>
             </div>
           </div>
         </div>

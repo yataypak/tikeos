@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Barcode,
   Printer,
@@ -17,17 +17,14 @@ import {
   BellRing,
   Users,
   Plus,
-  Mic,
-  MicOff,
-  Volume2,
-  HelpCircle,
-  Sparkles,
+  Eye,
 } from 'lucide-react';
 import {
   type ProductItem,
   type CategoryItem,
   type DiningTableItem,
   type OrderRecord,
+  type StaffMember,
   type KitchenStationName,
   type TableStatus,
   type OrderStatus,
@@ -35,17 +32,25 @@ import {
 import {
   calculateSplitBill,
   calculateCashDiscrepancy,
+  filterOrdersByMultiCriteria,
+  buildSimulatedPosOrderForPreview,
+  type OrderFilterCriteria,
   type WaiterServiceCallRecord,
 } from '../core/restaurantEngine';
 import { type SiteCmsConfig } from '../data/siteCmsStore';
-import { printThermalReceipt, downloadThermalReceiptHtml } from '../utils/receiptPrinter';
-import { parsePOSVoiceCommand, type VoiceCommandResult } from '../core/voiceCommandParser';
+import {
+  printThermalReceipt,
+  downloadThermalReceiptHtml,
+  buildThermalReceiptInnerMarkup,
+} from '../utils/receiptPrinter';
+import { OrderMultiFilterBar } from './OrderMultiFilterBar';
 
 interface POSKasaTerminalProps {
   products: ProductItem[];
   categories: CategoryItem[];
   tables: DiningTableItem[];
   orders: OrderRecord[];
+  staff?: StaffMember[];
   isOnline: boolean;
   siteCmsConfig?: SiteCmsConfig;
   onCreatePosOrder: (payload: {
@@ -71,6 +76,7 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
   categories,
   tables,
   orders,
+  staff = [],
   isOnline,
   siteCmsConfig,
   onCreatePosOrder,
@@ -79,9 +85,16 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
   onRecordAudit,
 }) => {
   const [receiptActionNotice, setReceiptActionNotice] = useState<string | null>(null);
-  const _posUnusedCheck = null;
-  void _posUnusedCheck;
-  const [selectedTableId, setSelectedTableId] = useState<string>('TBL-02');
+  const [selectedTableId, setSelectedTableId] = useState<string>(() =>
+    siteCmsConfig?.operationalSettings?.tableSelectionEnabled === false ? 'FAST_SALE' : 'TBL-02'
+  );
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [posOrderFilter, setPosOrderFilter] = useState<OrderFilterCriteria>({
+    categoryIds: [],
+    waiterNames: [],
+    channels: [],
+    searchQuery: '',
+  });
   const [barcodeInput, setBarcodeInput] = useState('');
   const [posCategoryId, setPosCategoryId] = useState<string>('ALL');
   const [posSearch, setPosSearch] = useState('');
@@ -90,53 +103,46 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
   >([]);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [splitGuestCount, setSplitGuestCount] = useState<number>(2);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Nakit');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>(() => {
+    const def = siteCmsConfig?.operationalSettings?.posDefaultMethod;
+    if (def === 'cash') return 'Nakit';
+    if (def === 'meal_card') return 'Yemek Kartı';
+    return 'Fiziksel POS';
+  });
   const [customPayAmount, setCustomPayAmount] = useState<string>('');
   const [targetTransferTableId, setTargetTransferTableId] = useState<string>('TBL-03');
   const [countedPhysicalCash, setCountedPhysicalCash] = useState<number>(15600);
   const [posMessage, setPosMessage] = useState<string | null>(null);
-  const [receiptPreviewOrder, setReceiptPreviewOrder] = useState<OrderRecord | null>(null);
-
-  // Web Speech API Voice Command State (Sesli Komut Sistemi)
-  const [isVoiceListening, setIsVoiceListening] = useState(false);
-  const [voiceTranscript, setVoiceTranscript] = useState('');
-  const [voiceFeedback, setVoiceFeedback] = useState<{ message: string; isError?: boolean } | null>(null);
-  const [showVoiceHelpModal, setShowVoiceHelpModal] = useState(false);
-  const [lastExecutedCommand, setLastExecutedCommand] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
-
-  // Component unmount cleanup
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-    };
-  }, []);
+  const [isReceiptDialogOpen, setIsReceiptDialogOpen] = useState<boolean>(false);
+  const [pinnedReceiptOrder, setPinnedReceiptOrder] = useState<OrderRecord | null>(null);
+  const [previewPaperWidthMm, setPreviewPaperWidthMm] = useState<58 | 80>(
+    () => siteCmsConfig?.receiptSettings?.paperWidthMm || 80
+  );
 
   const activeTable = tables.find((t) => t.id === selectedTableId) || null;
+  const matchedAllOrders = filterOrdersByMultiCriteria(orders, products, posOrderFilter);
   const activeTableOrder =
+    (selectedOrderId ? orders.find((o) => o.id === selectedOrderId) : null) ||
     orders.find(
       (o) =>
         o.tableId === selectedTableId &&
         o.status !== 'Tamamlandı' &&
         o.status !== 'İptal edildi' &&
         o.status !== 'İade edildi'
-    ) || null;
+    ) ||
+    null;
 
   const filteredProducts = products.filter((p) => {
+    const matchMultiCat =
+      posOrderFilter.categoryIds.length === 0 ||
+      posOrderFilter.categoryIds.includes(p.categoryId);
     const matchCat = posCategoryId === 'ALL' || p.categoryId === posCategoryId;
     const matchQuery =
       !posSearch.trim() ||
       p.name.toLowerCase().includes(posSearch.toLowerCase()) ||
       p.code.toLowerCase().includes(posSearch.toLowerCase()) ||
       p.barcode.includes(posSearch.trim());
-    return matchCat && matchQuery;
+    return matchMultiCat && matchCat && matchQuery;
   });
 
   const rawCartSubtotal = posCart.reduce(
@@ -150,6 +156,41 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
   const billTotalToSettle = activeTableOrder ? activeTableOrder.totalAmount : netCartTotal;
   const alreadyPaidOnBill = activeTableOrder ? activeTableOrder.paidAmount : 0;
   const splitInfo = calculateSplitBill(billTotalToSettle, alreadyPaidOnBill, splitGuestCount);
+
+  // Real-time simulated thermal receipt order (works before final payment processing for both posCart and activeTableOrder)
+  const liveSimulatedOrder: OrderRecord = buildSimulatedPosOrderForPreview({
+    tableId: activeTable?.id || 'FAST_SALE',
+    tableName: activeTable?.number || 'Hızlı Satış (Tezgah)',
+    staffName: activeTable?.waiterName || 'Kasa Personeli',
+    paymentMethodLabel: selectedPaymentMethod,
+    discountPercent,
+    taxRatePercent: siteCmsConfig?.generalSettings.taxRatePercent ?? 10,
+    cartItems: posCart.map((c) => ({
+      productId: c.product.id,
+      productName: c.product.name,
+      quantity: c.quantity,
+      unitPrice: c.isComplimentary ? 0 : c.product.discountedPrice ?? c.product.price,
+      station: c.product.station,
+    })),
+    activeOrder: activeTableOrder,
+  });
+  const receiptPreviewOrder: OrderRecord = pinnedReceiptOrder || liveSimulatedOrder;
+
+  const buildCurrentReceiptOptions = (overridePaperWidth?: 58 | 80) => ({
+    ...siteCmsConfig?.receiptSettings,
+    paperWidthMm: overridePaperWidth ?? previewPaperWidthMm,
+    companyName:
+      siteCmsConfig?.receiptSettings?.companyName ||
+      siteCmsConfig?.generalSettings.companyLegalName,
+    legalName: siteCmsConfig?.receiptSettings?.legalName,
+    address: siteCmsConfig?.receiptSettings?.address || siteCmsConfig?.contact.addressTr,
+    phone: siteCmsConfig?.receiptSettings?.phone || siteCmsConfig?.contact.phoneDisplay,
+    taxOfficeAndNo:
+      siteCmsConfig?.receiptSettings?.taxOfficeAndNo ||
+      siteCmsConfig?.generalSettings.taxOfficeAndNo,
+    taxRatePercent: siteCmsConfig?.generalSettings.taxRatePercent ?? 10,
+    logoUrl: siteCmsConfig?.header.logoUrl,
+  });
 
   const cashReconciliation = calculateCashDiscrepancy({
     openingBalance: 2500,
@@ -194,236 +235,6 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
     });
   };
 
-  // Web Speech API Voice Command Dispatcher
-  const handleExecuteVoiceCommand = (rawText: string) => {
-    if (!rawText.trim()) return;
-    const res = parsePOSVoiceCommand(rawText);
-    setLastExecutedCommand(rawText.trim());
-
-    switch (res.intent) {
-      case 'SHOW_OPEN_TICKETS': {
-        setPosCategoryId('ALL');
-        setPosSearch('');
-        const openOrder = orders.find(
-          (o) =>
-            o.tableId &&
-            o.status !== 'Tamamlandı' &&
-            o.status !== 'İptal edildi' &&
-            o.status !== 'İade edildi'
-        );
-        if (openOrder && openOrder.tableId) {
-          setSelectedTableId(openOrder.tableId);
-        }
-        setPosMessage(`Açık adisyonlar ve masalar listelendi.`);
-        break;
-      }
-
-      case 'PRINT_LAST_RECEIPT': {
-        const orderToPrint =
-          activeTableOrder ||
-          orders.find((o) => o.status === 'Tamamlandı' || o.paymentStatus === 'Ödendi') ||
-          orders[0] ||
-          null;
-
-        if (orderToPrint) {
-          setReceiptPreviewOrder(orderToPrint);
-          printThermalReceipt(orderToPrint, {
-            companyName: siteCmsConfig?.generalSettings.companyLegalName,
-            address: siteCmsConfig?.contact.addressTr,
-            phone: siteCmsConfig?.contact.phoneDisplay,
-            taxOfficeAndNo: siteCmsConfig?.generalSettings.taxOfficeAndNo,
-            logoUrl: siteCmsConfig?.header.logoUrl,
-          });
-          setReceiptActionNotice(`Termal fiş yazdırıldı: ${orderToPrint.orderNumber} (${orderToPrint.tableName})`);
-        } else {
-          setPosMessage('Yazdırılacak geçmiş fiş kaydı bulunamadı.');
-        }
-        break;
-      }
-
-      case 'SELECT_TABLE': {
-        if (res.tableNumber) {
-          const cleanNum = res.tableNumber.replace(/\D/g, '');
-          const found = tables.find(
-            (t) =>
-              t.number.toLowerCase() === res.tableNumber?.toLowerCase() ||
-              t.id.toLowerCase() === res.tableNumber?.toLowerCase() ||
-              t.number.includes(cleanNum)
-          );
-          if (found) {
-            setSelectedTableId(found.id);
-            setPosMessage(`${found.number} seçildi. (Durum: ${found.status}, Bakiye: ${found.openBalance.toFixed(2)} ₺)`);
-          } else {
-            setPosMessage(`Sistemde ${res.tableNumber} bulunamadı.`);
-          }
-        }
-        break;
-      }
-
-      case 'SELECT_FAST_SALE': {
-        setSelectedTableId('FAST_SALE');
-        setPosMessage('Hızlı Satış (Tezgah / Paket) adisyonu seçildi.');
-        break;
-      }
-
-      case 'SELECT_PAYMENT_METHOD': {
-        if (res.paymentMethod) {
-          setSelectedPaymentMethod(res.paymentMethod);
-          setPosMessage(`Ödeme yöntemi ${res.paymentMethod} olarak seçildi.`);
-        }
-        break;
-      }
-
-      case 'CONFIRM_PAYMENT': {
-        const amountToPay = customPayAmount
-          ? Number(customPayAmount)
-          : splitInfo.remainingAmount;
-
-        if (activeTableOrder) {
-          onSettleOrderPayment(
-            activeTableOrder.id,
-            amountToPay,
-            selectedPaymentMethod
-          );
-          setCustomPayAmount('');
-          setPosMessage(
-            `${activeTableOrder.orderNumber} için ${amountToPay.toFixed(2)} ₺ (${selectedPaymentMethod}) tahsilatı sesli komutla onaylandı.`
-          );
-        } else if (posCart.length > 0) {
-          onCreatePosOrder({
-            tableId: selectedTableId === 'FAST_SALE' ? null : selectedTableId,
-            channel: 'Kasa',
-            customerName: 'POS Hızlı Satış Misafiri (Sesli Komut)',
-            items: posCart,
-            discountAmount: calculatedDiscount,
-            paymentMethod: selectedPaymentMethod,
-            paidAmount: amountToPay,
-          });
-          setPosCart([]);
-          setCustomPayAmount('');
-          setPosMessage(
-            `Yeni POS siparişi sesli komutla oluşturuldu ve ${amountToPay.toFixed(2)} ₺ (${selectedPaymentMethod}) tahsil edildi.`
-          );
-        } else {
-          setPosMessage('Tahsilat için açık siparişi olan masa seçin veya sepete ürün ekleyin.');
-        }
-        break;
-      }
-
-      case 'CLEAR_CART': {
-        setPosCart([]);
-        setDiscountPercent(0);
-        setPosMessage('POS sepeti ve iskonto sıfırlandı.');
-        break;
-      }
-
-      case 'APPLY_DISCOUNT': {
-        if (res.discountPercent !== undefined) {
-          setDiscountPercent(res.discountPercent);
-          setPosMessage(`Adisyona %${res.discountPercent} yetkili iskonto uygulandı.`);
-        }
-        break;
-      }
-
-      case 'FILTER_CATEGORY': {
-        if (res.categoryFilter) {
-          setPosCategoryId(res.categoryFilter);
-          setPosSearch('');
-        }
-        break;
-      }
-
-      default: {
-        setPosMessage(res.feedbackMessage);
-        break;
-      }
-    }
-
-    setVoiceFeedback({
-      message: res.feedbackMessage,
-      isError: res.intent === 'UNKNOWN',
-    });
-
-    onRecordAudit(
-      'POS / Kasa',
-      'Sesli Komut (Web Speech)',
-      `"${rawText}" ➔ Niyet: ${res.intent}`,
-      res.intent === 'UNKNOWN' ? 'Uyarı' : 'Normal'
-    );
-  };
-
-  const toggleVoiceRecognition = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRec =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRec) {
-      setVoiceFeedback({
-        message: 'Tarayıcınız Web Speech API özelliğini doğrudan desteklemiyor. Aşağıdaki hazır test butonlarına tıklayarak sesli komutları deneyebilirsiniz.',
-        isError: true,
-      });
-      return;
-    }
-
-    if (isVoiceListening) {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      setIsVoiceListening(false);
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRec();
-      recognition.lang = 'tr-TR';
-      recognition.continuous = false;
-      recognition.interimResults = true;
-
-      recognition.onstart = () => {
-        setIsVoiceListening(true);
-        setVoiceTranscript('Mikrofon aktif, sizi dinliyor... "Açık adisyonları göster" veya "Son fişi yazdır" diyebilirsiniz.');
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((r: any) => r[0].transcript)
-          .join('');
-        setVoiceTranscript(transcript);
-
-        if (event.results[0]?.isFinal) {
-          handleExecuteVoiceCommand(transcript);
-          setIsVoiceListening(false);
-        }
-      };
-
-      recognition.onerror = (err: any) => {
-        setIsVoiceListening(false);
-        setVoiceFeedback({
-          message: `Mikrofon uyarısı (${err.error || 'Ses algılanamadı'}). Hazır komut düğmelerini kullanabilirsiniz.`,
-          isError: true,
-        });
-      };
-
-      recognition.onend = () => {
-        setIsVoiceListening(false);
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (e: any) {
-      setIsVoiceListening(false);
-      setVoiceFeedback({
-        message: 'Mikrofon başlatılamadı: ' + (e?.message || 'İzin verilmedi'),
-        isError: true,
-      });
-    }
-  };
-
   return (
     <div className="space-y-6">
       {posMessage && (
@@ -438,120 +249,84 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
         </div>
       )}
 
-      {/* Sesli Komut (Web Speech API) Durum ve Geri Bildirim Bandı */}
-      {(isVoiceListening || voiceFeedback || lastExecutedCommand) && (
-        <div
-          role="region"
-          aria-label="Sesli Komut Durumu"
-          className={`rounded-2xl border p-4 text-xs transition-all flex flex-wrap items-center justify-between gap-3 ${
-            isVoiceListening
-              ? 'border-rose-500/70 bg-rose-950/20 text-rose-200 ring-2 ring-rose-500/30'
-              : voiceFeedback?.isError
-              ? 'border-amber-500/60 bg-amber-950/20 text-amber-200'
-              : 'border-[#D4AF6A]/60 bg-[#1A1815] text-[#F5F2EB]'
-          }`}
-        >
-          <div className="flex items-center gap-3">
-            {isVoiceListening ? (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-600 text-white font-bold animate-pulse text-[11px]">
-                <Mic className="w-3.5 h-3.5 animate-bounce" />
-                <span>Dinleniyor...</span>
-                <span className="flex gap-0.5 items-center ml-1">
-                  <span className="w-1 h-3 bg-white rounded-full animate-pulse" />
-                  <span className="w-1 h-4 bg-white rounded-full animate-pulse delay-75" />
-                  <span className="w-1 h-2 bg-white rounded-full animate-pulse delay-150" />
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#B86B35]/20 text-[#D4AF6A] font-bold text-[11px]">
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>Sesli Komut</span>
-              </div>
-            )}
+      <OrderMultiFilterBar
+        categories={categories}
+        orders={orders}
+        tables={tables}
+        staff={staff}
+        criteria={posOrderFilter}
+        onChangeCriteria={setPosOrderFilter}
+        totalCount={orders.length}
+        filteredCount={matchedAllOrders.length}
+        compact
+        title="POS Kasa Çoklu Filtreleme (Ürün Kategorisi · Garson · Sipariş Kanalı)"
+        testIdPrefix="pos-filter"
+      />
 
-            <div>
-              <div className="font-semibold">
-                {isVoiceListening
-                  ? voiceTranscript || 'Konuşun: "Açık adisyonları göster", "Son fişi yazdır", "Masa 3"...'
-                  : voiceFeedback?.message || `Son Çalıştırılan Komut: "${lastExecutedCommand}"`}
-              </div>
-              {lastExecutedCommand && isVoiceListening && (
-                <div className="text-[10px] text-neutral-400 mt-0.5">
-                  Önceki komut: {lastExecutedCommand}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowVoiceHelpModal(true)}
-              className="px-2.5 py-1 rounded-lg border border-neutral-600 hover:bg-neutral-800 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-              Komut Rehberi
-            </button>
-            {voiceFeedback && (
-              <button
-                type="button"
-                onClick={() => setVoiceFeedback(null)}
-                className="px-2 py-1 text-[11px] underline text-neutral-400 hover:text-white cursor-pointer"
-              >
-                Kapat
-              </button>
-            )}
-          </div>
+      {/* Filtrelenen Siparişler Hızlı Seçim Şeridi */}
+      <div
+        data-testid="pos-filtered-orders-strip"
+        className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-3 space-y-2"
+      >
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-bold text-neutral-900 dark:text-[#F5F2EB]">
+            Filtreye Uygun POS / Kasa Siparişleri ({matchedAllOrders.length})
+          </span>
+          <span className="text-[11px] text-neutral-500">
+            Tahsilat veya fiş yazdırmak için siparişe tıklayın
+          </span>
         </div>
-      )}
-
-      {/* Hızlı Sesli Komut Simülatörü ve Test Çipleri */}
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="font-semibold text-neutral-500 mr-1 flex items-center gap-1">
-          <Sparkles className="w-3.5 h-3.5 text-[#D4AF6A]" /> Hızlı Sesli Komutlar:
-        </span>
-        <button
-          type="button"
-          onClick={() => handleExecuteVoiceCommand('Açık adisyonları göster')}
-          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
-        >
-          🎙️ &ldquo;Açık adisyonları göster&rdquo;
-        </button>
-        <button
-          type="button"
-          onClick={() => handleExecuteVoiceCommand('Son fişi yazdır')}
-          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
-        >
-          🎙️ &ldquo;Son fişi yazdır&rdquo;
-        </button>
-        <button
-          type="button"
-          onClick={() => handleExecuteVoiceCommand('Masa 3')}
-          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
-        >
-          🎙️ &ldquo;Masa 3&rdquo;
-        </button>
-        <button
-          type="button"
-          onClick={() => handleExecuteVoiceCommand('Nakit')}
-          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
-        >
-          🎙️ &ldquo;Nakit&rdquo;
-        </button>
-        <button
-          type="button"
-          onClick={() => handleExecuteVoiceCommand('Kredi kartı')}
-          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
-        >
-          🎙️ &ldquo;Kredi kartı&rdquo;
-        </button>
-        <button
-          type="button"
-          onClick={() => handleExecuteVoiceCommand('Yüzde on indirim yap')}
-          className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:border-[#B86B35] bg-white dark:bg-[#1F1F1D] font-medium transition-colors cursor-pointer"
-        >
-          🎙️ &ldquo;%10 İndirim&rdquo;
-        </button>
+        {matchedAllOrders.length === 0 ? (
+          <div className="py-3 text-center text-xs text-neutral-500">
+            Seçili kategori, garson veya kanal filtrelerine uyan sipariş bulunamadı.
+          </div>
+        ) : (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {matchedAllOrders.map((ord) => {
+              const isSelected = activeTableOrder?.id === ord.id;
+              return (
+                <button
+                  key={ord.id}
+                  type="button"
+                  data-testid={`pos-order-card-${ord.orderNumber}`}
+                  onClick={() => {
+                    setSelectedOrderId(ord.id);
+                    setSelectedTableId(ord.tableId || 'FAST_SALE');
+                  }}
+                  className={`min-w-[210px] max-w-[240px] shrink-0 rounded-lg border p-2.5 text-left transition-all cursor-pointer ${
+                    isSelected
+                      ? 'border-[#B86B35] bg-[#B86B35]/15 ring-1 ring-[#B86B35]'
+                      : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141413] hover:border-[#B86B35]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px]">
+                    <span className="font-mono font-bold text-[#B86B35] dark:text-[#D4AF6A]">
+                      {ord.orderNumber}
+                    </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        ord.paymentStatus === 'Ödendi'
+                          ? 'bg-emerald-500/20 text-emerald-500'
+                          : 'bg-amber-500/20 text-amber-500'
+                      }`}
+                    >
+                      {ord.paymentStatus}
+                    </span>
+                  </div>
+                  <div className="text-xs font-semibold truncate mt-0.5">
+                    {ord.tableName} · {ord.channel}
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-neutral-500 mt-1">
+                    <span className="truncate">{ord.staffName}</span>
+                    <span className="font-mono font-bold text-neutral-900 dark:text-[#F5F2EB]">
+                      {ord.totalAmount.toFixed(2)} ₺
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -563,7 +338,10 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                 <label className="text-xs font-semibold">Masa / Satış Tipi:</label>
                 <select
                   value={selectedTableId}
-                  onChange={(e) => setSelectedTableId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedTableId(e.target.value);
+                    setSelectedOrderId(null);
+                  }}
                   aria-label="POS Masa Seçimi"
                   className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] px-3 py-1.5 text-xs font-medium"
                 >
@@ -576,40 +354,6 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                 </select>
               </div>
 
-              {/* Web Speech API Voice Microphone Button */}
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={toggleVoiceRecognition}
-                  title={isVoiceListening ? 'Sesli dinlemeyi durdur' : 'Web Speech API Sesli Komut Başlat'}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm ${
-                    isVoiceListening
-                      ? 'bg-rose-600 text-white animate-pulse ring-2 ring-rose-400'
-                      : 'bg-[#B86B35] hover:bg-[#9F5928] text-white'
-                  }`}
-                >
-                  {isVoiceListening ? (
-                    <>
-                      <MicOff className="w-3.5 h-3.5" />
-                      <span>Dinlemeyi Durdur</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="w-3.5 h-3.5" />
-                      <span>Sesli Komut</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowVoiceHelpModal(true)}
-                  title="Sesli Komut Rehberi"
-                  className="p-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                </button>
-              </div>
-
               {/* Barcode Scanner Input */}
               <form onSubmit={handleBarcodeSubmit} className="flex items-center gap-2">
                 <div className="relative">
@@ -620,7 +364,7 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                     onChange={(e) => setBarcodeInput(e.target.value)}
                     placeholder="Barkod (8690001000012)"
                     aria-label="Barkod veya Ürün Kodu Okut"
-                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] pl-8 pr-3 py-1.5 text-xs font-mono w-44"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] pl-8 pr-3 py-1.5 text-xs font-mono w-48"
                   />
                 </div>
                 <button
@@ -751,7 +495,7 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
         {/* Right 5 Cols: Active Ticket / Split Bill / Multi-Payment / Cash Register */}
         <div className="lg:col-span-5 space-y-4">
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#1F1F1D] p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-200 dark:border-neutral-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200 dark:border-neutral-800">
               <div>
                 <h3 className="text-base font-semibold text-neutral-900 dark:text-[#F5F2EB]">
                   POS Adisyon & Kasa Tahsilat Ekranı
@@ -759,19 +503,45 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                 <p className="text-xs text-neutral-500">
                   {activeTableOrder
                     ? `Aktif Sipariş: ${activeTableOrder.orderNumber} (${activeTableOrder.tableName})`
-                    : 'Yeni Hızlı Adisyon Oluşturuluyor'}
+                    : `Canlı POS Adisyonu (${liveSimulatedOrder.tableName})`}
                 </p>
               </div>
-              {activeTableOrder && (
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setReceiptPreviewOrder(activeTableOrder)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-300 dark:border-neutral-700"
+                  data-testid="pos-receipt-preview-btn"
+                  onClick={() => {
+                    setPinnedReceiptOrder(null);
+                    setReceiptActionNotice(null);
+                    setIsReceiptDialogOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-[#B86B35] text-[#B86B35] dark:text-[#D4AF6A] hover:bg-[#B86B35]/10 cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Fiş Önizleme</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="pos-direct-print-btn"
+                  onClick={() => {
+                    setPinnedReceiptOrder(null);
+                    const ok = printThermalReceipt(
+                      liveSimulatedOrder,
+                      buildCurrentReceiptOptions()
+                    );
+                    const msg = ok
+                      ? `Termal fiş (${liveSimulatedOrder.orderNumber}) yazıcı kuyruğuna gönderildi.`
+                      : 'Termal fiş önizlemesi hazırlandı; HTML olarak da indirebilirsiniz.';
+                    setPosMessage(msg);
+                    setReceiptActionNotice(msg);
+                    setIsReceiptDialogOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#141413] dark:bg-[#F5F2EB] text-[#F5F2EB] dark:text-[#141413] hover:opacity-90 cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Adisyon Yazdır</span>
+                  <span>Fiş Yazdır</span>
                 </button>
-              )}
+              </div>
             </div>
 
             {/* Existing table order items OR new POS cart */}
@@ -977,9 +747,47 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
                     setPosMessage('Tahsilat için aktif masa siparişi seçin veya sepete ürün ekleyin.');
                   }
                 }}
-                className="px-4 py-2 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] disabled:opacity-50 text-white text-xs font-semibold whitespace-nowrap shrink-0"
+                className="px-4 py-2 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] disabled:opacity-50 text-white text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {activeTableOrder ? 'Tahsilatı Onayla' : 'Satışı Tamamla'}
+              </button>
+            </div>
+
+            {/* Real-Time Pre-Payment Thermal Receipt Action Strip */}
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              <button
+                type="button"
+                data-testid="pos-bottom-receipt-preview-btn"
+                onClick={() => {
+                  setPinnedReceiptOrder(null);
+                  setReceiptActionNotice(null);
+                  setIsReceiptDialogOpen(true);
+                }}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#141413] hover:border-[#B86B35] text-xs font-semibold cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5 text-[#B86B35]" />
+                <span>Canlı Fiş Önizleme ({liveSimulatedOrder.totalAmount.toFixed(2)} ₺)</span>
+              </button>
+              <button
+                type="button"
+                data-testid="pos-bottom-direct-print-btn"
+                onClick={() => {
+                  setPinnedReceiptOrder(null);
+                  const ok = printThermalReceipt(
+                    liveSimulatedOrder,
+                    buildCurrentReceiptOptions()
+                  );
+                  const msg = ok
+                    ? `Termal fiş (${liveSimulatedOrder.orderNumber}) doğrudan yazıcıya gönderildi.`
+                    : 'Termal fiş şablonu hazırlandı.';
+                  setPosMessage(msg);
+                  setReceiptActionNotice(msg);
+                  setIsReceiptDialogOpen(true);
+                }}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Doğrudan Termal Fiş Yazdır</span>
               </button>
             </div>
           </div>
@@ -1027,223 +835,174 @@ export const POSKasaTerminal: React.FC<POSKasaTerminalProps> = ({
         </div>
       </div>
 
-      {/* Receipt Preview Modal */}
-      {receiptPreviewOrder && (
+      {/* Real-Time Thermal Receipt Preview Dialog ('Fiş Önizleme') */}
+      {isReceiptDialogOpen && receiptPreviewOrder && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          data-testid="pos-receipt-preview-dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 overflow-y-auto"
           role="dialog"
           aria-modal="true"
+          aria-label="Fiş Önizleme ve Termal Yazıcı Diyaloğu"
         >
-          <div className="w-full max-w-sm rounded-xl border border-neutral-300 bg-[#F8F6F0] text-[#141413] p-6 font-mono text-xs space-y-3">
-            <div className="text-center border-b border-dashed border-neutral-400 pb-3 space-y-0.5">
-              <div className="font-bold text-sm">ÖZTİKE CİĞER OCAKBAŞI</div>
-              <div>{siteCmsConfig?.contact.addressTr || 'Karagöz Mah. Şahinbey Cad. No: 42 · Şahinbey / Gaziantep'}</div>
-              <div>Otomatik Bilgi Fişi &amp; e-Arşiv Belgesi</div>
-              <div className="mt-1">
-                Sipariş: {receiptPreviewOrder.orderNumber} · {receiptPreviewOrder.tableName}
-              </div>
-              {receiptPreviewOrder.receiptNumber && (
-                <div>Fiş No: {receiptPreviewOrder.receiptNumber}</div>
-              )}
-              {receiptPreviewOrder.eInvoiceNo && (
-                <div>e-Fatura: {receiptPreviewOrder.eInvoiceNo}</div>
-              )}
-            </div>
-            <div className="space-y-1.5 border-b border-dashed border-neutral-400 pb-3">
-              {receiptPreviewOrder.items.map((it) => (
-                <div key={it.id} className="flex justify-between">
-                  <span>
-                    {it.quantity}x {it.productName.slice(0, 22)}
+          <div className="w-full max-w-lg rounded-2xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#1F1F1D] p-5 space-y-4 my-auto shadow-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200 dark:border-neutral-800">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-[#B86B35]/15 text-[#B86B35] dark:text-[#D4AF6A] text-[10px] font-mono font-bold">
+                    CANLI TERMAL SİMÜLASYON
                   </span>
-                  <span>{(it.unitPrice * it.quantity).toFixed(2)} ₺</span>
+                  <span className="text-[11px] font-mono text-neutral-500">
+                    {receiptPreviewOrder.id === 'ORD-SIMULATED-PREVIEW'
+                      ? 'Ödeme Öncesi Anlık Önizleme'
+                      : 'Aktif Adisyon Fişi'}
+                  </span>
                 </div>
-              ))}
-              {receiptPreviewOrder.discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-700">
-                  <span>Kampanya İndirimi</span>
-                  <span>-{receiptPreviewOrder.discountAmount.toFixed(2)} ₺</span>
-                </div>
-              )}
-              {(receiptPreviewOrder.deliveryFee || 0) > 0 && (
-                <div className="flex justify-between">
-                  <span>Kurye Teslimat Ücreti</span>
-                  <span>+{(receiptPreviewOrder.deliveryFee || 0).toFixed(2)} ₺</span>
-                </div>
-              )}
-              {(receiptPreviewOrder.tipAmount || 0) > 0 && (
-                <div className="flex justify-between">
-                  <span>Bahşiş</span>
-                  <span>+{(receiptPreviewOrder.tipAmount || 0).toFixed(2)} ₺</span>
-                </div>
-              )}
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between">
-                <span>Ödeme Yöntemi</span>
-                <span>{receiptPreviewOrder.paymentMethod || 'Nakit / POS (Kasa)'}</span>
+                <h4 className="text-sm font-bold text-neutral-900 dark:text-[#F5F2EB] mt-0.5">
+                  Fiş Önizleme & Doğrudan Termal Yazıcı Şablonu
+                </h4>
               </div>
-              <div className="flex justify-between">
-                <span>KDV (%{siteCmsConfig?.generalSettings.taxRatePercent ?? 10})</span>
-                <span>{receiptPreviewOrder.taxAmount.toFixed(2)} ₺</span>
-              </div>
-              <div className="flex justify-between font-bold text-sm pt-1 border-t border-neutral-300">
-                <span>GENEL TOPLAM</span>
-                <span>{receiptPreviewOrder.totalAmount.toFixed(2)} ₺</span>
-              </div>
-              <div className="text-[10px] text-neutral-600 pt-2">
-                Not: Yasal mali fiş ve e-Arşiv/e-Fatura işlemleri yetkili ÖKC ve GİB özel entegratör bağlantısıyla düzenlenir.
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPreviewPaperWidthMm(80)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold cursor-pointer ${
+                    previewPaperWidthMm === 80
+                      ? 'bg-[#B86B35] text-white'
+                      : 'border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300'
+                  }`}
+                >
+                  80mm Rulo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPaperWidthMm(58)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold cursor-pointer ${
+                    previewPaperWidthMm === 58
+                      ? 'bg-[#B86B35] text-white'
+                      : 'border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300'
+                  }`}
+                >
+                  58mm Rulo
+                </button>
               </div>
             </div>
+
+            {/* Simulated Thermal Paper Roll */}
+            <div className="max-h-[62vh] overflow-y-auto flex justify-center bg-neutral-100 dark:bg-[#141413] p-4 rounded-xl border border-neutral-200 dark:border-neutral-800">
+              <div
+                data-testid="pos-thermal-receipt-paper"
+                className={`w-full ${
+                  previewPaperWidthMm === 58 ? 'max-w-[270px]' : 'max-w-[360px]'
+                } rounded-lg border border-neutral-300 bg-[#FFFDF9] text-[#141413] p-4 shadow-md`}
+                dangerouslySetInnerHTML={{
+                  __html: buildThermalReceiptInnerMarkup(
+                    receiptPreviewOrder,
+                    buildCurrentReceiptOptions(previewPaperWidthMm)
+                  ),
+                }}
+              />
+            </div>
+
             {receiptActionNotice && (
-              <div className="rounded-lg bg-emerald-100 border border-emerald-400 px-3 py-1.5 text-[11px] font-sans font-semibold text-emerald-900">
+              <div
+                data-testid="pos-receipt-action-notice"
+                className="rounded-lg bg-emerald-100 border border-emerald-400 px-3 py-2 text-xs font-sans font-semibold text-emerald-900"
+              >
                 {receiptActionNotice}
               </div>
             )}
-            <div className="flex flex-wrap justify-end gap-2 pt-3">
-              <button
-                type="button"
-                onClick={() => {
-                  const ok = printThermalReceipt(receiptPreviewOrder, {
-                    companyName: siteCmsConfig?.generalSettings.companyLegalName,
-                    address: siteCmsConfig?.contact.addressTr,
-                    phone: siteCmsConfig?.contact.phoneDisplay,
-                    taxOfficeAndNo: siteCmsConfig?.generalSettings.taxOfficeAndNo,
-                    logoUrl: siteCmsConfig?.header.logoUrl,
-                  });
-                  setReceiptActionNotice(
-                    ok
-                      ? 'Termal yazıcı çıktısı hazırlandı ve yazdır penceresine gönderildi.'
-                      : 'Yazdır penceresi açılamadı; e-Arşiv HTML indir butonunu kullanabilirsiniz.'
-                  );
-                }}
-                className="px-3.5 py-1.5 rounded bg-[#B86B35] text-white font-sans font-medium cursor-pointer"
-              >
-                Yazdır (POS / Termal)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  downloadThermalReceiptHtml(receiptPreviewOrder, {
-                    companyName: siteCmsConfig?.generalSettings.companyLegalName,
-                    address: siteCmsConfig?.contact.addressTr,
-                    phone: siteCmsConfig?.contact.phoneDisplay,
-                    taxOfficeAndNo: siteCmsConfig?.generalSettings.taxOfficeAndNo,
-                    logoUrl: siteCmsConfig?.header.logoUrl,
-                  });
-                  setReceiptActionNotice('Fiş / e-Arşiv belgesi HTML olarak indirildi.');
-                }}
-                className="px-3.5 py-1.5 rounded border border-neutral-400 bg-white text-[#141413] font-sans font-medium cursor-pointer"
-              >
-                Fiş İndir (.HTML)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setReceiptActionNotice(null);
-                  setReceiptPreviewOrder(null);
-                }}
-                className="px-3.5 py-1.5 rounded bg-[#141413] text-white font-sans font-medium cursor-pointer"
-              >
-                Kapat
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* Sesli Komut Rehberi Modal (Web Speech API) */}
-      {showVoiceHelpModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="voice-guide-title"
-        >
-          <div className="w-full max-w-lg rounded-2xl border border-[#D4AF6A]/50 bg-white dark:bg-[#1A1815] text-neutral-900 dark:text-[#F5F2EB] p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="pos-modal-print-btn"
+                  onClick={() => {
+                    const ok = printThermalReceipt(
+                      receiptPreviewOrder,
+                      buildCurrentReceiptOptions(previewPaperWidthMm)
+                    );
+                    setReceiptActionNotice(
+                      ok
+                        ? 'Termal yazıcı çıktısı hazırlandı ve tarayıcı yazdırma kuyruğuna gönderildi.'
+                        : 'Yazdır penceresi tetiklendi; HTML olarak da indirebilirsiniz.'
+                    );
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#B86B35] hover:bg-[#9F5928] text-white text-xs font-semibold cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Fiş Yazdır (Termal)</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="pos-modal-download-html-btn"
+                  onClick={() => {
+                    downloadThermalReceiptHtml(
+                      receiptPreviewOrder,
+                      buildCurrentReceiptOptions(previewPaperWidthMm)
+                    );
+                    setReceiptActionNotice('Termal fiş / e-Arşiv belgesi HTML olarak indirildi.');
+                  }}
+                  className="px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#141413] text-neutral-900 dark:text-[#F5F2EB] text-xs font-semibold cursor-pointer"
+                >
+                  Fiş İndir (.HTML)
+                </button>
+              </div>
               <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-[#B86B35]/20 text-[#B86B35] dark:text-[#D4AF6A]">
-                  <Mic className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 id="voice-guide-title" className="font-bold text-sm">
-                    POS Kasa Sesli Komut Rehberi (Web Speech API)
-                  </h3>
-                  <p className="text-[11px] text-neutral-500">
-                    Kasa personeli elleri meşgulken mikrofona konuşarak veya hızlı düğmelere basarak işlem yapabilir.
-                  </p>
-                </div>
+                {(activeTableOrder || posCart.length > 0) && (
+                  <button
+                    type="button"
+                    data-testid="pos-modal-settle-and-print-btn"
+                    onClick={async () => {
+                      const amountToPay = customPayAmount
+                        ? Number(customPayAmount)
+                        : splitInfo.remainingAmount;
+                      if (activeTableOrder) {
+                        await onSettleOrderPayment(
+                          activeTableOrder.id,
+                          amountToPay,
+                          selectedPaymentMethod
+                        );
+                        setPosMessage(
+                          `${activeTableOrder.orderNumber} tahsilatı onaylandı ve termal fiş kesildi.`
+                        );
+                      } else if (posCart.length > 0) {
+                        onCreatePosOrder({
+                          tableId: selectedTableId === 'FAST_SALE' ? null : selectedTableId,
+                          channel: 'Kasa',
+                          customerName: 'POS Hızlı Satış Misafiri',
+                          items: posCart,
+                          discountAmount: calculatedDiscount,
+                          paymentMethod: selectedPaymentMethod,
+                          paidAmount: amountToPay,
+                        });
+                        setPosCart([]);
+                        setPosMessage('Yeni POS satışı tamamlandı ve termal fiş kesildi.');
+                      }
+                      printThermalReceipt(
+                        receiptPreviewOrder,
+                        buildCurrentReceiptOptions(previewPaperWidthMm)
+                      );
+                      setIsReceiptDialogOpen(false);
+                    }}
+                    className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold cursor-pointer"
+                  >
+                    Ödemeyi Onayla & Fişi Kes
+                  </button>
+                )}
+                <button
+                  type="button"
+                  data-testid="pos-modal-close-btn"
+                  onClick={() => {
+                    setReceiptActionNotice(null);
+                    setPinnedReceiptOrder(null);
+                    setIsReceiptDialogOpen(false);
+                  }}
+                  className="px-3.5 py-2 rounded-lg bg-[#141413] dark:bg-neutral-800 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Kapat
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowVoiceHelpModal(false)}
-                className="p-1 rounded-lg text-neutral-400 hover:text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs max-h-[60vh] overflow-y-auto pr-1">
-              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 space-y-1.5">
-                <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                  <Printer className="w-4 h-4" />
-                  <span>Adisyon &amp; Fiş Yazdırma Komutları</span>
-                </div>
-                <ul className="list-disc list-inside space-y-1 text-neutral-600 dark:text-neutral-300">
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Açık adisyonları göster&rdquo;</strong>: Bekleyen tüm masa ve siparişleri listeler.
-                  </li>
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Son fişi yazdır&rdquo;</strong> veya <strong className="text-neutral-900 dark:text-white">&ldquo;Fatura yazdır&rdquo;</strong>: En son tamamlanan veya seçili siparişin termal fişini yazdırır.
-                  </li>
-                </ul>
-              </div>
-
-              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 space-y-1.5">
-                <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                  <QrCode className="w-4 h-4" />
-                  <span>Masa &amp; Satış Seçimi</span>
-                </div>
-                <ul className="list-disc list-inside space-y-1 text-neutral-600 dark:text-neutral-300">
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Masa 3&rdquo;</strong> veya <strong className="text-neutral-900 dark:text-white">&ldquo;Masa beş&rdquo;</strong>: İlgili masayı seçer ve açık adisyonunu ekrana getirir.
-                  </li>
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Hızlı satış&rdquo;</strong>: Tezgah / paket satış adisyonuna geçer.
-                  </li>
-                </ul>
-              </div>
-
-              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-[#141413] border border-neutral-200 dark:border-neutral-800 space-y-1.5">
-                <div className="font-bold text-[#B86B35] dark:text-[#D4AF6A] flex items-center gap-1.5">
-                  <CreditCard className="w-4 h-4" />
-                  <span>Ödeme Yöntemi &amp; Tahsilat</span>
-                </div>
-                <ul className="list-disc list-inside space-y-1 text-neutral-600 dark:text-neutral-300">
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Nakit&rdquo;</strong> / <strong className="text-neutral-900 dark:text-white">&ldquo;Kredi kartı&rdquo;</strong> / <strong className="text-neutral-900 dark:text-white">&ldquo;Yemek kartı&rdquo;</strong>: Ödeme yöntemini anında seçer.
-                  </li>
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Tahsilatı onayla&rdquo;</strong> veya <strong className="text-neutral-900 dark:text-white">&ldquo;Hesabı kapat&rdquo;</strong>: Ödeme işlemini onaylar ve siparişi kapatır.
-                  </li>
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Yüzde on indirim yap&rdquo;</strong>: Adisyona yetkili %10 iskonto tanımlar.
-                  </li>
-                  <li>
-                    <strong className="text-neutral-900 dark:text-white">&ldquo;Sepeti temizle&rdquo;</strong>: POS sepetini sıfırlar.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2 border-t border-neutral-200 dark:border-neutral-800">
-              <button
-                type="button"
-                onClick={() => setShowVoiceHelpModal(false)}
-                className="px-4 py-2 rounded-xl bg-[#B86B35] text-white font-semibold cursor-pointer"
-              >
-                Anladım, Kapat
-              </button>
             </div>
           </div>
         </div>
@@ -1438,7 +1197,7 @@ interface WaiterTableTerminalProps {
   orders: OrderRecord[];
   waiterCalls?: WaiterServiceCallRecord[];
   onChangeTableStatus: (tableId: string, status: TableStatus) => void;
-  onRotateQrToken: (tableId: string, revokeOnly: boolean) => void;
+  onRotateQrToken?: (tableId: string, revokeOnly: boolean) => void;
   onClearTableAlerts: (tableId: string) => void;
   onResolveWaiterCall?: (callId: string, tableId: string) => void;
   onUpdateOrderStatus: (orderId: string, newStatus: OrderStatus) => void;
@@ -1449,7 +1208,6 @@ export const WaiterTableTerminal: React.FC<WaiterTableTerminalProps> = ({
   orders,
   waiterCalls = [],
   onChangeTableStatus,
-  onRotateQrToken,
   onClearTableAlerts,
   onResolveWaiterCall,
   onUpdateOrderStatus,
@@ -1571,7 +1329,7 @@ export const WaiterTableTerminal: React.FC<WaiterTableTerminalProps> = ({
 
                 <div className="flex items-center justify-between pt-2 border-t border-neutral-200 dark:border-neutral-800">
                   <span className="font-mono text-[10px] text-neutral-500">
-                    Token: {call.qrToken}
+                    {call.qrCodeNumber} · {call.tableArea}
                   </span>
                   <button
                     type="button"
@@ -1665,7 +1423,7 @@ export const WaiterTableTerminal: React.FC<WaiterTableTerminalProps> = ({
                   <div className="font-mono text-[11px] flex items-center gap-1">
                     <QrCode className="w-3 h-3 text-[#D4AF6A] shrink-0" />
                     <span>
-                      {table.qrCodeNumber} · {table.qrRevoked ? 'İPTAL EDİLDİ' : table.qrToken}
+                      {table.qrCodeNumber} · {table.area}
                     </span>
                   </div>
                   {table.mergedWith && (
@@ -1707,24 +1465,6 @@ export const WaiterTableTerminal: React.FC<WaiterTableTerminalProps> = ({
                     </option>
                   ))}
                 </select>
-
-                <div className="flex items-center gap-1.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => onRotateQrToken(table.id, false)}
-                    className="flex-1 inline-flex items-center justify-center gap-1 py-1.5 px-2 text-[11px] font-medium rounded border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>QR Yenile</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onRotateQrToken(table.id, true)}
-                    className="py-1.5 px-2 text-[11px] font-medium rounded border border-red-700/40 text-red-600 dark:text-red-400 hover:bg-red-950/20"
-                  >
-                    QR İptal
-                  </button>
-                </div>
               </div>
             </div>
           );

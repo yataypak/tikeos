@@ -126,7 +126,7 @@ export interface MenuPackageItem {
 export interface DiningTableItem {
   id: string;
   number: string;
-  area: 'Ana Salon' | 'Taş Bahçe' | 'Bakır Ocakbaşı' | 'VIP Aile Salonu';
+  area: 'Ana Salon' | 'Taş Bahçe' | 'Bakır Ocakbaşı' | 'VIP Aile Salonu' | (string & {});
   capacity: number;
   status: TableStatus;
   waiterName: string;
@@ -319,44 +319,6 @@ export interface CMSPageItem {
   updatedAt: string;
 }
 
-export interface IntegrationAdvancedConfig {
-  apiKey?: string;
-  apiSecret?: string;
-  merchantId?: string;
-  terminalId?: string;
-  subMerchantKey?: string;
-  endpointUrl?: string;
-  ipAddress?: string;
-  port?: number;
-  timeoutMs?: number;
-  environment?: 'Sandbox' | 'Production';
-  threeDSecure?: boolean;
-  commissionRate?: number;
-  currency?: 'TRY' | 'USD' | 'EUR';
-  paperWidthMm?: 58 | 80;
-  autoCutPaper?: boolean;
-  autoPrintReceipt?: boolean;
-  kitchenStationRouting?: string;
-  autoConfirmOrders?: boolean;
-  defaultPrepMinutes?: number;
-  stockSyncEnabled?: boolean;
-  eInvoicePrefix?: string;
-  integratorCompany?: string;
-  autoIssueOnPayment?: boolean;
-  smsSenderHeader?: string;
-  templateLanguage?: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
-  debugLogging?: boolean;
-  retryAttempts?: number;
-  customHeaders?: string;
-  multinetActive?: boolean;
-  pluxeeActive?: boolean;
-  edenredActive?: boolean;
-  setcardActive?: boolean;
-  posTerminalProtocol?: 'JSON-RPC' | 'REST' | 'TCP-Socket' | 'Serial-COM';
-}
-
 export interface IntegrationPluginItem {
   id: string;
   code: string;
@@ -389,7 +351,6 @@ export interface IntegrationPluginItem {
   contractVerified: boolean;
   description?: string;
   settings?: Record<string, string | number | boolean>;
-  advancedConfig?: IntegrationAdvancedConfig;
 }
 
 export interface AuditLogEntry {
@@ -2189,7 +2150,129 @@ export const INITIAL_INTEGRATIONS: IntegrationPluginItem[] = [
     description: 'Arama motorları için TR/EN/AR meta, Gaziantep coğrafi etiketleri ve JSON-LD yayınlar.',
     settings: { autoInjectJsonLd: true, includeRobotsTxt: true, includeSitemapXml: true },
   },
+  {
+    id: 'INT-29',
+    code: 'gib-eadisyon-okc',
+    name: 'GİB e-Adisyon & Yeni Nesil ÖKC (Beko / Ingenico / Profilo)',
+    category: 'Muhasebe',
+    version: '3.0.4',
+    scope: 'gib:eadisyon, okc:gmp3_pair, tax:instant',
+    installed: true,
+    enabled: true,
+    mode: 'Canlı (Live)',
+    lastTested: '16 Kas 2026 13:30',
+    contractVerified: true,
+    description: 'Gelir İdaresi Başkanlığı e-Adisyon tebliğine tam uyumlu anlık masa fişi ve GMP-3 ÖKC eşleşmesi.',
+    settings: {
+      terminalSerialNo: 'JH90028411',
+      gmp3Port: 8443,
+      autoSendEadisyonOnTableOpen: true,
+      okcBrand: 'Ingenico IDE280',
+      ersaliyeFallback: true,
+    },
+  },
+  {
+    id: 'INT-30',
+    code: 'trendyol-kurye-radar',
+    name: 'Trendyol GO & Paket Mutfak Canlı Kurye GPS Radar',
+    category: 'Kurye',
+    version: '2.4.1',
+    scope: 'courier:gps_stream, eta:predict, sms:tracking_link',
+    installed: true,
+    enabled: true,
+    mode: 'Canlı (Live)',
+    lastTested: '16 Kas 2026 13:12',
+    contractVerified: true,
+    description: 'Kuryelerin canlı GPS koordinatlarını müşteri takip ekranına ve ısı haritasına aktarır.',
+    settings: {
+      gpsPollIntervalSec: 10,
+      sendLiveTrackingSms: true,
+      maxRadiusKm: 12,
+      heatmapColorScheme: 'copper-amber',
+    },
+  },
+  {
+    id: 'INT-31',
+    code: 'tiklagelsin-fuudy-bridge',
+    name: 'Tıkla Gelsin & Fuudy Gurme Sipariş Köprüsü',
+    category: 'Yemek Platformu',
+    version: '1.6.2',
+    scope: 'marketplace:orders, stock:auto_close',
+    installed: true,
+    enabled: true,
+    mode: 'Canlı (Live)',
+    lastTested: '16 Kas 2026 12:50',
+    contractVerified: true,
+    description: 'Tıkla Gelsin ve Fuudy üzerinden gelen ciğer/kebap siparişlerini tek KDS kuyruğunda birleştirir.',
+    settings: {
+      fuudyMerchantId: 'FDY-GAZ-42',
+      tiklaGelsinStoreCode: 'TG-2701',
+      autoSyncOutOfStockItems: true,
+      packagingFeeTry: 15,
+    },
+  },
+  {
+    id: 'INT-32',
+    code: 'cpanel-mysql-cron-backup',
+    name: 'cPanel PHP/MySQL Otomatik Veritabanı & Medya Yedekleyici',
+    category: 'Webhook',
+    version: '2.1.0',
+    scope: 'cpanel:mysqldump, storage:s3_ftp, cron:hourly',
+    installed: true,
+    enabled: true,
+    mode: 'Canlı (Live)',
+    lastTested: '16 Kas 2026 13:00',
+    contractVerified: true,
+    description: 'cPanel paylaşımlı ve kurumsal hostinglerde MySQL veritabanını ve ürün görsellerini saatlik yedekler.',
+    settings: {
+      cronSchedule: '0 * * * *',
+      compressGzip: true,
+      keepLastBackupsCount: 30,
+      remoteBackupPath: '/home/oztike/backups/mysql',
+    },
+  },
+  {
+    id: 'INT-33',
+    code: 'cloudflare-turnstile-waf',
+    name: 'Cloudflare Turnstile & QR Menü Sahte Sipariş Kalkanı',
+    category: 'Webhook',
+    version: '1.9.0',
+    scope: 'security:bot_shield, qr:rate_limit, waf:geo',
+    installed: true,
+    enabled: true,
+    mode: 'Canlı (Live)',
+    lastTested: '16 Kas 2026 13:22',
+    contractVerified: true,
+    description: 'Masa QR siparişlerinde bot saldırılarını, sahte garson çağrılarını ve DDoS isteklerini engeller.',
+    settings: {
+      siteKey: '0x4AAAAAAAb99OzTikeWaf',
+      blockNonTurkeyIpOnQr: false,
+      maxRequestsPerMinute: 25,
+      challengeMode: 'managed-invisible',
+    },
+  },
+  {
+    id: 'INT-34',
+    code: 'ai-voice-ivr-order',
+    name: 'Sesli Telefon Siparişi & Çağrı Merkezi AI Asistanı (IVR)',
+    category: 'Yapay zekâ',
+    version: '1.5.0',
+    scope: 'voice:stt_tts, order:phone_create, crm:caller_id',
+    installed: true,
+    enabled: true,
+    mode: 'Test (Sandbox)',
+    lastTested: '16 Kas 2026 11:45',
+    contractVerified: true,
+    description: 'Telefonla arayan müşteriyi Caller-ID ile tanır, geçmiş siparişini okur ve sesli siparişi kasaya düşürür.',
+    settings: {
+      sipTrunkHost: 'sip.netgsm.com.tr',
+      voicePersona: 'Halil Usta Misafirperver Ses Tonu',
+      autoCreateDraftOrder: true,
+      confidenceThresholdPercent: 85,
+    },
+  },
 ];
+
 
 export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   { id: 'LOG-901', timestamp: '16 Kas 2026 13:18:12', actor: 'QR Token #OZT-QR-1D4B8F77', role: 'Garson', module: 'QR Menü', action: 'Yeni Masa Siparişi', detail: 'Bahçe 1 masası için #OZT-2026-1042 numaralı sipariş oluşturuldu (665,00 ₺)', severity: 'Normal' },

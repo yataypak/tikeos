@@ -84,6 +84,13 @@ export interface CustomBlockItem {
   isActive: boolean;
 }
 
+import type {
+  ThemeVariantId,
+  MapProviderMode,
+  FreeMapProviderId,
+  PaidMapProviderId,
+} from '../core/restaurantEngine';
+
 export interface CustomPluginWidgetItem {
   id: string;
   name: string;
@@ -91,6 +98,8 @@ export interface CustomPluginWidgetItem {
   description: string;
   isActive: boolean;
   version: string;
+  placement?: 'header' | 'hero' | 'menu' | 'footer' | 'global';
+  settings?: Record<string, string | number | boolean>;
 }
 
 export interface SiteCmsConfig {
@@ -129,6 +138,7 @@ export interface SiteCmsConfig {
     slides: HeroSlideItem[];
   };
   design: {
+    themeVariant: ThemeVariantId;
     primaryColor: string;
     secondaryColor: string;
     backgroundColor: string;
@@ -137,6 +147,15 @@ export interface SiteCmsConfig {
     cardRadius: 'rounded-xl' | 'rounded-2xl' | 'rounded-3xl';
     buttonStyle: 'gold-gradient' | 'copper-solid' | 'emerald-accent';
     buttonRadius: 'rounded-lg' | 'rounded-xl' | 'rounded-full';
+    buttonFontWeight?: 'semibold' | 'bold' | 'extrabold';
+    iconStyle?: 'outline' | 'solid' | 'rounded';
+    iconSizePx?: number;
+    gridColumnsDesktop?: 2 | 3 | 4;
+    gridColumnsMobile?: 1 | 2;
+    gridGap?: 'compact' | 'normal' | 'relaxed';
+    navbarPosition?: 'top' | 'centered';
+    footerColumns?: 2 | 3 | 4;
+    footerBgColor?: string;
     showProductCalories: boolean;
     showProductPrepTime: boolean;
     qrButtonLabelTr: string;
@@ -183,7 +202,18 @@ export interface SiteCmsConfig {
     canonicalUrl: string;
     robots: string;
     ogImageUrl: string;
+    ogImageAlt?: string;
+    twitterCard?: 'summary_large_image' | 'summary';
     schemaType: 'Restaurant' | 'FoodEstablishment' | 'LocalBusiness';
+    servesCuisine?: string;
+    priceRange?: string;
+    openingHoursSpec?: string;
+    telephone?: string;
+    postalCode?: string;
+    acceptsReservations?: boolean;
+    ratingValue?: number;
+    reviewCount?: number;
+    hreflangEnabled?: boolean;
     author: string;
     publisher: string;
     copyright: string;
@@ -231,6 +261,19 @@ export interface SiteCmsConfig {
     paperWidthMm: 58 | 80;
     showLogo: boolean;
     showStampBox: boolean;
+    templatePreset?: 'classic-thermal' | 'modern-minimal' | 'gaziantep-heritage' | 'kurumsal-efatura';
+    accentColor?: string;
+    fontFamily?: 'mono' | 'sans' | 'serif';
+    borderStyle?: 'dashed' | 'solid' | 'double';
+    showQrCode?: boolean;
+    qrCodeUrl?: string;
+    showBarcode?: boolean;
+    showTaxBreakdown?: boolean;
+    showWaiterAndTable?: boolean;
+    showWifiInfo?: boolean;
+    wifiSsid?: string;
+    wifiPassword?: string;
+    socialHandle?: string;
   };
   pwaSettings: {
     enabled: boolean;
@@ -239,14 +282,41 @@ export interface SiteCmsConfig {
     description: string;
     themeColor: string;
     backgroundColor: string;
+    accentColor?: string;
+    splashTextColor?: string;
+    buttonColor?: string;
+    appCategory?: string;
     displayMode: 'standalone' | 'fullscreen' | 'minimal-ui';
     orientation: 'portrait' | 'any';
     iconUrl: string;
+    maskableIconUrl?: string;
+    splashImageUrl?: string;
+    splashVideoUrl?: string;
+    splashTitleTr?: string;
+    splashSubtitleTr?: string;
+    pushTitleTr?: string;
+    pushBodyTr?: string;
+    pushBadgeUrl?: string;
+    pushVibratePattern?: string;
+    statusBarStyle?: 'black-translucent' | 'default' | 'black';
+    startUrl: string;
+    scope: string;
+    cacheStrategy: 'NetworkFirst' | 'StaleWhileRevalidate' | 'CacheFirst';
     installButtonLabelTr: string;
     iosHintTr: string;
+    offlineTitleTr?: string;
     offlineTextTr: string;
     enableOfflineCache: boolean;
     enablePushNotifications: boolean;
+    showHeaderInstallBtn: boolean;
+    showFooterCard: boolean;
+    screenshots?: string[];
+    shortcuts?: {
+      name: string;
+      shortName: string;
+      url: string;
+      description: string;
+    }[];
   };
   promoPopup: {
     enabled: boolean;
@@ -261,11 +331,47 @@ export interface SiteCmsConfig {
     ctaLabelTr: string;
     ctaUrl: string;
     imageUrl: string;
+    videoUrl?: string;
+    bgColor?: string;
+    textColor?: string;
+    accentColor?: string;
+    triggerType?: 'immediate' | 'delay' | 'exit';
     delaySeconds: number;
+    autoCloseSeconds?: number;
+    dismissible?: boolean;
     showOncePerSession: boolean;
+  };
+  paymentMethods?: {
+    id: string;
+    name: string;
+    code: string;
+    type: 'cash' | 'pos' | 'online_card' | 'meal_card' | 'transfer' | 'wallet';
+    commissionPercent: number;
+    isActive: boolean;
+    allowOnCustomerPortal: boolean;
+    allowPayNow: boolean;
+    description: string;
+  }[];
+  reservationSettings?: {
+    slotDurationMinutes: number;
+    minPartySize: number;
+    maxPartySize: number;
+    depositRequired: boolean;
+    defaultDepositAmount: number;
+    autoConfirm: boolean;
+    workingStartHour: string;
+    workingEndHour: string;
+    advanceBookingDays: number;
+    allowCustomerNotes: boolean;
   };
   mapSettings: {
     enabled: boolean;
+    showFooterMap: boolean;
+    providerMode: MapProviderMode;
+    freeProvider: FreeMapProviderId;
+    paidProvider: PaidMapProviderId;
+    paidApiKey: string;
+    customEmbedUrl: string;
     placeName: string;
     addressLine: string;
     lat: number;
@@ -280,6 +386,9 @@ export interface SiteCmsConfig {
     enableBingMaps: boolean;
   };
   operationalSettings: {
+    kitchenModuleEnabled: boolean;
+    tableSelectionEnabled: boolean;
+    orderTrackingEnabled: boolean;
     qrRequireScan: boolean;
     qrRateLimitPerMin: number;
     kdsAlertMinutes: number;
@@ -289,6 +398,7 @@ export interface SiteCmsConfig {
     posDefaultMethod: 'cash' | 'card' | 'meal_card';
     posAutoReceiptPrint: boolean;
   };
+  paymentMethodsV2Migrated?: boolean;
   modules: {
     aiAssistantEnabled: boolean;
     gallerySectionEnabled: boolean;
@@ -427,6 +537,7 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
     ],
   },
   design: {
+    themeVariant: 'oztike-classic',
     primaryColor: '#D4A359',
     secondaryColor: '#B0782C',
     backgroundColor: '#120806',
@@ -435,6 +546,15 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
     cardRadius: 'rounded-2xl',
     buttonStyle: 'gold-gradient',
     buttonRadius: 'rounded-xl',
+    buttonFontWeight: 'bold',
+    iconStyle: 'rounded',
+    iconSizePx: 16,
+    gridColumnsDesktop: 3,
+    gridColumnsMobile: 1,
+    gridGap: 'normal',
+    navbarPosition: 'top',
+    footerColumns: 3,
+    footerBgColor: '',
     showProductCalories: false,
     showProductPrepTime: false,
     qrButtonLabelTr: 'Masadaki QR Kodu Okut',
@@ -507,7 +627,7 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
       category: 'Ocakbaşı Video',
       thumbnailUrl: '/assets/aistudio/crops/branded-ocakbasi.jpg',
       mediaUrl: '/videos/ciger-ocakbasi-promo.mp4',
-      duration: '00:07',
+      duration: '00:25',
       isActive: true,
     },
     {
@@ -530,7 +650,7 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
       category: 'Ustalık Video',
       thumbnailUrl: '/assets/aistudio/crops/branded-dining.jpg',
       mediaUrl: '/videos/halil-usta-tanitim.mp4',
-      duration: '00:07',
+      duration: '00:25',
       isActive: true,
     },
     {
@@ -542,7 +662,7 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
       category: 'Lezzet Video',
       thumbnailUrl: '/assets/aistudio/crops/branded-doner-lahmacun.jpg',
       mediaUrl: '/videos/doner-lahmacun-promo.mp4',
-      duration: '00:07',
+      duration: '00:22',
       isActive: true,
     },
     {
@@ -654,17 +774,28 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
     metaTitleEn: 'ÖzTike Ciğer · Master Halil | Authentic Charcoal Lamb Liver & Kebab in Gaziantep',
     metaTitleAr: 'مطعم أوز تيكه للكبدة · الشيف خليل أوسطا | غازي عنتاب',
     metaDescriptionTr:
-      '1996’dan beri Şahinbey / Gaziantep’te meşe közünde günlük taze kuzu ciğeri, zırh kebapları, taş fırın lahmacun ve QR masa sipariş sistemi.',
+      '1996’dan beri Şahinbey / Gaziantep’te meşe közünde günlük taze kuzu ciğeri, zırh kebapları, taş fırın lahmacun ve online sipariş sistemi.',
     metaDescriptionEn:
       'Serving daily fresh lamb liver skewers over oak charcoal, hand-minced kebabs, and stone-oven lahmacun in Şahinbey / Gaziantep since 1996.',
     metaDescriptionAr:
       'منذ عام ١٩٩٦ في شاهين بيه / غازي عنتاب نقدم كبدة الضأن الطازجة على فحم البلوط والكباب ولحم بعجين بالفرن الحجري.',
     keywords:
-      'öztike ciğer, halil usta, şahinbey ciğer, gaziantep ciğer kebap, zırh kebabı, taş fırın lahmacun, yaprak döner, gaziantep ocakbaşı, qr menü sipariş',
+      'öztike ciğer, halil usta, şahinbey ciğer, gaziantep ciğer kebap, zırh kebabı, taş fırın lahmacun, yaprak döner, gaziantep ocakbaşı, online sipariş',
     canonicalUrl: 'https://oztikeciger.com.tr',
     robots: 'index, follow, max-image-preview:large, max-snippet:-1',
     ogImageUrl: '/assets/aistudio/crops/branded-ocakbasi.jpg',
+    ogImageAlt: 'ÖzTike Ciğer Halil Usta Meşe Közünde Ocakbaşı Sunumu',
+    twitterCard: 'summary_large_image',
     schemaType: 'Restaurant',
+    servesCuisine: 'Turkish, Gaziantep Ocakbaşı, Ciğer & Kebap',
+    priceRange: '₺₺',
+    openingHoursSpec: 'Mo-Su 11:00-24:00',
+    telephone: '+905551234567',
+    postalCode: '27010',
+    acceptsReservations: true,
+    ratingValue: 4.9,
+    reviewCount: 1248,
+    hreflangEnabled: true,
     author: 'Halil Usta · ÖzTike Ciğer Gastronomi Ekibi',
     publisher: 'ÖzTike Ciğer Ocakbaşı Turizm Gıda Ltd. Şti.',
     copyright: '© 2026 ÖzTike Ciğer · Halil Usta · Şahinbey / Gaziantep. Tüm Hakları Saklıdır.',
@@ -712,22 +843,73 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
     paperWidthMm: 80,
     showLogo: true,
     showStampBox: true,
+    templatePreset: 'gaziantep-heritage',
+    accentColor: '#B86B35',
+    fontFamily: 'mono',
+    borderStyle: 'dashed',
+    showQrCode: true,
+    qrCodeUrl: 'https://oztikeciger.com.tr/#menu',
+    showBarcode: true,
+    showTaxBreakdown: true,
+    showWaiterAndTable: true,
+    showWifiInfo: true,
+    wifiSsid: 'OzTike_Misafir_5G',
+    wifiPassword: 'halilusta1996',
+    socialHandle: '@oztikeciger · oztikeciger.com.tr',
   },
   pwaSettings: {
     enabled: true,
     appName: 'ÖzTike Ciğer · Halil Usta',
     shortName: 'ÖzTike Ciğer',
-    description: 'Şahinbey Gaziantep meşe közünde kuzu ciğer şiş, kebap ve hızlı QR sipariş uygulaması.',
+    description: 'Şahinbey Gaziantep meşe közünde kuzu ciğer şiş, kebap ve hızlı sipariş uygulaması.',
     themeColor: '#D4A359',
     backgroundColor: '#120806',
+    accentColor: '#B86B35',
+    splashTextColor: '#FFF7EB',
+    buttonColor: '#D4A359',
+    appCategory: 'food',
     displayMode: 'standalone',
     orientation: 'portrait',
     iconUrl: '/assets/aistudio/oztike-logo-transparent.png',
+    maskableIconUrl: '/pwa-maskable-512x512.png',
+    splashImageUrl: '/assets/aistudio/crops/hero-ciger.png',
+    splashVideoUrl: '/videos/ciger-ocakbasi-promo.mp4',
+    splashTitleTr: 'ÖzTike Ciğer · Halil Usta',
+    splashSubtitleTr: '1996’dan Beri Meşe Közünde Gerçek Lezzet',
+    pushTitleTr: 'Siparişiniz Meşe Közünden Çıktı!',
+    pushBodyTr: 'Sıcak tandır lavaşı ve 7 çeşit köz meze eşliğinde servis için hazır.',
+    pushBadgeUrl: '/pwa-192x192.png',
+    pushVibratePattern: '200,100,200',
+    statusBarStyle: 'black-translucent',
+    startUrl: '/',
+    scope: '/',
+    cacheStrategy: 'NetworkFirst',
     installButtonLabelTr: 'Uygulamayı Cihaza Yükle (PWA)',
-    iosHintTr: 'iOS Safari’de Paylaş (⬆️) -> Ana Ekrana Ekle adımı ile kurabilirsiniz.',
+    iosHintTr: 'iOS Safari’de Paylaş -> Ana Ekrana Ekle adımı ile kurabilirsiniz.',
+    offlineTitleTr: 'Çevrimdışı Mod Aktif',
     offlineTextTr: 'Bağlantı kesildi — Menü önbellekten görüntüleniyor.',
     enableOfflineCache: true,
     enablePushNotifications: true,
+    showHeaderInstallBtn: true,
+    showFooterCard: true,
+    screenshots: [
+      '/assets/aistudio/crops/branded-ocakbasi.jpg',
+      '/assets/aistudio/crops/branded-dining.jpg',
+    ],
+    shortcuts: [
+      {
+        name: 'Menüye Git',
+        shortName: 'Menü',
+        url: '/#menu',
+        description: 'Güncel ciğer ve kebap menüsünü görüntüle',
+      },
+      {
+        name: 'Kampanyalar',
+        shortName: 'Fırsatlar',
+        url: '/#kampanyalar',
+        description: 'Aktif kupon ve fırsatları incele',
+      },
+    ],
   },
   promoPopup: {
     enabled: false,
@@ -742,11 +924,105 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
     ctaLabelTr: 'Kuponu Uygula & Siparişe Geç',
     ctaUrl: '#menu',
     imageUrl: '/assets/aistudio/crops/branded-ocakbasi.jpg',
-    delaySeconds: 4,
+    videoUrl: '',
+    bgColor: '#180B08',
+    textColor: '#FFF6E9',
+    accentColor: '#D4A359',
+    triggerType: 'delay',
+    delaySeconds: 3,
+    autoCloseSeconds: 0,
+    dismissible: true,
     showOncePerSession: true,
+  },
+  paymentMethodsV2Migrated: true,
+  paymentMethods: [
+    {
+      id: 'PM-CASH',
+      name: 'Kasada / Masada Nakit',
+      code: 'cash',
+      type: 'cash',
+      commissionPercent: 0,
+      isActive: true,
+      allowOnCustomerPortal: true,
+      allowPayNow: false,
+      description: 'Kasada, masada veya kapıda nakit tahsilat',
+    },
+    {
+      id: 'PM-POS-CARD',
+      name: 'POS Cihazı ile Kart',
+      code: 'pos_card',
+      type: 'pos',
+      commissionPercent: 1.85,
+      isActive: true,
+      allowOnCustomerPortal: true,
+      allowPayNow: false,
+      description: 'Kasa veya mobil POS cihazı ile temassız kredi / banka kartı ödemesi',
+    },
+    {
+      id: 'PM-FAST-TRANSFER',
+      name: 'Havale / EFT (IBAN)',
+      code: 'transfer',
+      type: 'transfer',
+      commissionPercent: 0,
+      isActive: true,
+      allowOnCustomerPortal: true,
+      allowPayNow: false,
+      description: 'TR42 0006 2000 0000 0199 6019 96 · ÖzTike Ciğer Gıda Ltd. Şti. (Ziraat Bankası)',
+    },
+    {
+      id: 'PM-ONLINE-CARD',
+      name: 'Online Kart (iyzico / PayTR)',
+      code: 'online_card',
+      type: 'online_card',
+      commissionPercent: 2.15,
+      isActive: true,
+      allowOnCustomerPortal: false,
+      allowPayNow: true,
+      description: '3D Secure güvenlikli anlık sanal POS ödemesi (Admin panelden açılabilir)',
+    },
+    {
+      id: 'PM-MEAL-CARD',
+      name: 'Yemek Kartı (Sodexo/Multinet)',
+      code: 'meal_card',
+      type: 'meal_card',
+      commissionPercent: 4.5,
+      isActive: true,
+      allowOnCustomerPortal: false,
+      allowPayNow: false,
+      description: 'Multinet, Sodexo, Ticket ve Setcard ödemeleri',
+    },
+    {
+      id: 'PM-WALLET',
+      name: 'Dijital Cüzdan / Apple & Google Pay (Online)',
+      code: 'wallet',
+      type: 'wallet',
+      commissionPercent: 1.9,
+      isActive: true,
+      allowOnCustomerPortal: false,
+      allowPayNow: true,
+      description: 'Tek dokunuşla dijital cüzdan ödemesi',
+    },
+  ],
+  reservationSettings: {
+    slotDurationMinutes: 90,
+    minPartySize: 1,
+    maxPartySize: 24,
+    depositRequired: false,
+    defaultDepositAmount: 250,
+    autoConfirm: false,
+    workingStartHour: '11:00',
+    workingEndHour: '23:30',
+    advanceBookingDays: 30,
+    allowCustomerNotes: true,
   },
   mapSettings: {
     enabled: true,
+    showFooterMap: true,
+    providerMode: 'free',
+    freeProvider: 'google-embed-free',
+    paidProvider: 'google-js-api',
+    paidApiKey: '',
+    customEmbedUrl: '',
     placeName: 'ÖzTike Ciğer · Halil Usta (Şahinbey Merkez)',
     addressLine: 'Karagöz Mah. Şahinbey Cad. No: 42 Şahinbey / Gaziantep',
     lat: 37.0628,
@@ -761,7 +1037,10 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
     enableBingMaps: true,
   },
   operationalSettings: {
-    qrRequireScan: true,
+    kitchenModuleEnabled: false,
+    tableSelectionEnabled: false,
+    orderTrackingEnabled: false,
+    qrRequireScan: false,
     qrRateLimitPerMin: 20,
     kdsAlertMinutes: 14,
     kdsActiveStations: ['Izgara', 'Tavuk', 'Soğuk mutfak', 'İçecek', 'Paketleme'],
@@ -785,6 +1064,13 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
         description: 'Müşterilere 8 dilde menü, salata, içecek ve sipariş öneren akıllı AI asistanı',
         isActive: true,
         version: '3.2.0',
+        placement: 'global',
+        settings: {
+          autoOpenWelcome: false,
+          suggestBeverages: true,
+          tone: 'Samimi Gaziantep Misafirperverliği',
+          maxSuggestions: 4,
+        },
       },
       {
         id: 'WDG-02',
@@ -793,6 +1079,12 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
         description: 'Header dil seçici ile tüm sistemi anında 8 farklı dile çevirir (AR & KU RTL uyumlu)',
         isActive: true,
         version: '2.5.0',
+        placement: 'header',
+        settings: {
+          defaultLang: 'tr',
+          enableRtlAuto: true,
+          persistInStorage: true,
+        },
       },
       {
         id: 'WDG-03',
@@ -801,6 +1093,12 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
         description: 'Hem müşteri vitrininde hem adminde resimli ve videolu galeri yönetimi',
         isActive: true,
         version: '1.8.0',
+        placement: 'menu',
+        settings: {
+          autoplayMutedVideo: true,
+          columnsDesktop: 3,
+          showDurationBadge: true,
+        },
       },
       {
         id: 'WDG-04',
@@ -809,6 +1107,12 @@ export const INITIAL_SITE_CMS_CONFIG: SiteCmsConfig = {
         description: 'Sipariş, garson çağrısı ve masa durumları için sesli ve görsel bildirim merkezi',
         isActive: true,
         version: '2.2.0',
+        placement: 'global',
+        settings: {
+          soundVolumePercent: 80,
+          enableBrowserPush: true,
+          toastDurationMs: 5000,
+        },
       },
     ],
   },

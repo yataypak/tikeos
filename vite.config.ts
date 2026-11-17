@@ -67,6 +67,20 @@ export default defineConfig(() => {
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, { recursive: true, force: true });
           }
+          // Hostinger / cPanel one-folder deployment bundle
+          const hostingerCopies: Array<[string, string]> = [
+            ['.htaccess', '.htaccess'],
+            ['database/schema.sql', 'database/schema.sql'],
+            ['config/database.php', 'config/database.php'],
+          ];
+          for (const [srcRel, dstRel] of hostingerCopies) {
+            const srcPath = path.resolve(__dirname, srcRel);
+            const dstPath = path.resolve(distDir, dstRel);
+            if (fs.existsSync(distDir) && fs.existsSync(srcPath)) {
+              fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+              fs.cpSync(srcPath, dstPath, { force: true });
+            }
+          }
         },
       },
     ],
